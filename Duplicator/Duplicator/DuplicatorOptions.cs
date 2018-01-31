@@ -27,6 +27,7 @@ namespace Duplicator
             Adapter = adapter.Description.Description;
             Output = adapter.Outputs.First().Description.DeviceName;
             FrameAcquisitionTimeout = 500;
+            ShowCursor = true;
         }
 
         [DisplayName("Directory Path")]
@@ -41,6 +42,18 @@ namespace Duplicator
         [Category(InputCategory)]
         [TypeConverter(typeof(DisplayDeviceTypeConverter))]
         public virtual string Output { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Show Cursor")]
+        [Category(InputCategory)]
+        public virtual bool ShowCursor { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Show Acquisition Fps")]
+        [Category(InputCategory)]
+        public virtual bool ShowInputFps { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Show Accumulated Frames")]
+        [Category(InputCategory)]
+        public virtual bool ShowAccumulatedFrames { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Frame Acquisition Timeout")]
         [Category(InputCategory)]
