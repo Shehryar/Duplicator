@@ -19,25 +19,43 @@ namespace WinDuplicator
 
         private WinDuplicatorOptions _options;
         private Duplicator.Duplicator _duplicator;
+        private Graphics _graphics;
 
         public Main()
         {
             InitializeComponent();
+            MinimumSize = Size;
             Icon = EmbeddedIcon;
             _options = new WinDuplicatorOptions();
             propertyGridMain.SelectedObject = _options;
             _duplicator = new Duplicator.Duplicator(_options);
             _duplicator.FrameAcquired += OnFrameAcquired;
+            _duplicator.Width = splitContainerMain.Panel1.Width;
+            _duplicator.Height = splitContainerMain.Panel1.Height;
+
+            splitContainerMain.Panel1.SizeChanged += (sender, e) =>
+            {
+                _duplicator.Width = splitContainerMain.Panel1.Width;
+                _duplicator.Height = splitContainerMain.Panel1.Height;
+            };
+
+            splitContainerMain.Panel1.HandleCreated += (sender, e) =>
+            {
+                _graphics = Graphics.FromHwnd(splitContainerMain.Panel1.Handle);
+                _duplicator.Hdc = _graphics.GetHdc();
+            };
+
+            splitContainerMain.Panel1.HandleDestroyed += (sender, e) =>
+            {
+                _duplicator.Hdc = IntPtr.Zero;
+                _graphics.ReleaseHdc();
+                _graphics.Dispose();
+            };
         }
 
         private void OnFrameAcquired(object sender, CancelEventArgs e)
         {
-            using (var g = Graphics.FromHwnd(splitContainerMain.Panel1.Handle))
-            {
-                var hdc = g.GetHdc();
-                _duplicator.RenderFrame(hdc, splitContainerMain.Panel1.Width, splitContainerMain.Panel1.Height);
-                g.ReleaseHdc(hdc);
-            }
+            _duplicator.RenderFrame();
         }
 
         protected override void OnClosed(EventArgs e)

@@ -31,9 +31,9 @@
             this.splitContainerMain = new System.Windows.Forms.SplitContainer();
             this.tableLayoutPanelMain = new System.Windows.Forms.TableLayoutPanel();
             this.panelCommands = new System.Windows.Forms.Panel();
+            this.checkBoxDuplicate = new System.Windows.Forms.CheckBox();
             this.buttonQuit = new System.Windows.Forms.Button();
             this.propertyGridMain = new System.Windows.Forms.PropertyGrid();
-            this.checkBoxDuplicate = new System.Windows.Forms.CheckBox();
             ((System.ComponentModel.ISupportInitialize)(this.splitContainerMain)).BeginInit();
             this.splitContainerMain.Panel2.SuspendLayout();
             this.splitContainerMain.SuspendLayout();
@@ -82,6 +82,18 @@
             this.panelCommands.Size = new System.Drawing.Size(345, 30);
             this.panelCommands.TabIndex = 1;
             // 
+            // checkBoxDuplicate
+            // 
+            this.checkBoxDuplicate.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
+            this.checkBoxDuplicate.AutoSize = true;
+            this.checkBoxDuplicate.Location = new System.Drawing.Point(180, 8);
+            this.checkBoxDuplicate.Name = "checkBoxDuplicate";
+            this.checkBoxDuplicate.Size = new System.Drawing.Size(71, 17);
+            this.checkBoxDuplicate.TabIndex = 1;
+            this.checkBoxDuplicate.Text = "&Duplicate";
+            this.checkBoxDuplicate.UseVisualStyleBackColor = true;
+            this.checkBoxDuplicate.CheckedChanged += new System.EventHandler(this.checkBoxDuplicate_CheckedChanged);
+            // 
             // buttonQuit
             // 
             this.buttonQuit.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
@@ -103,17 +115,6 @@
             this.propertyGridMain.Size = new System.Drawing.Size(339, 279);
             this.propertyGridMain.TabIndex = 2;
             this.propertyGridMain.ToolbarVisible = false;
-            // 
-            // checkBoxDuplicate
-            // 
-            this.checkBoxDuplicate.AutoSize = true;
-            this.checkBoxDuplicate.Location = new System.Drawing.Point(180, 8);
-            this.checkBoxDuplicate.Name = "checkBoxDuplicate";
-            this.checkBoxDuplicate.Size = new System.Drawing.Size(71, 17);
-            this.checkBoxDuplicate.TabIndex = 1;
-            this.checkBoxDuplicate.Text = "&Duplicate";
-            this.checkBoxDuplicate.UseVisualStyleBackColor = true;
-            this.checkBoxDuplicate.CheckedChanged += new System.EventHandler(this.checkBoxDuplicate_CheckedChanged);
             // 
             // Main
             // 

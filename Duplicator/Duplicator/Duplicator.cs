@@ -23,6 +23,7 @@ namespace Duplicator
         private SharpDX.Direct3D11.Device _device;
         private Output1 _output;
         private OutputDuplication _outputDuplication;
+        private SharpDX.DXGI.Resource _frame;
 #if DEBUG
         private DeviceDebug _deviceDebug;
 #endif
@@ -38,7 +39,7 @@ namespace Duplicator
         }
 
         public DuplicatorOptions Options { get; }
-        public SharpDX.DXGI.Resource Frame { get; private set; }
+        public SharpDX.DXGI.Resource Frame { get => _frame; set => _frame = value; }
 
         public bool IsDuplicating
         {
@@ -148,9 +149,25 @@ namespace Duplicator
             while (true);
         }
 
-        public void RenderFrame(IntPtr hdc, int width, int height)
+        public IntPtr Hdc { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
+
+        public void RenderFrame()
         {
-            if (Frame == null)
+            if (Hdc == IntPtr.Zero || Width == 0 || Height == 0)
+                return;
+
+            var frame = Frame;
+            if (frame == null)
+                return;
+
+            var output = _output;
+            if (output == null)
+                return;
+
+            var device = _device;
+            if (device == null)
                 return;
 
             var dcrt = _dcrt;
@@ -162,8 +179,8 @@ namespace Duplicator
                     CpuAccessFlags = CpuAccessFlags.Read,
                     BindFlags = BindFlags.None,
                     Format = Format.B8G8R8A8_UNorm,
-                    Width = _output.Description.DesktopBounds.Right - _output.Description.DesktopBounds.Left,
-                    Height = _output.Description.DesktopBounds.Bottom - _output.Description.DesktopBounds.Top,
+                    Width = output.Description.DesktopBounds.Right - output.Description.DesktopBounds.Left,
+                    Height = output.Description.DesktopBounds.Bottom - output.Description.DesktopBounds.Top,
                     OptionFlags = ResourceOptionFlags.None,
                     MipLevels = 1,
                     ArraySize = 1,
@@ -171,7 +188,7 @@ namespace Duplicator
                     Usage = ResourceUsage.Staging
                 };
 
-                dest = new Texture2D(_device, desc);
+                dest = new Texture2D(device, desc);
                 _dest = dest;
 
             }
@@ -189,9 +206,9 @@ namespace Duplicator
 
             using (var surface = dest.QueryInterface<Surface>())
             {
-                using (var res = Frame.QueryInterface<SharpDX.Direct3D11.Resource>())
+                using (var res = frame.QueryInterface<SharpDX.Direct3D11.Resource>())
                 {
-                    _device.ImmediateContext.CopyResource(res, dest);
+                    device.ImmediateContext.CopyResource(res, dest);
                 }
 
                 var map = surface.Map(SharpDX.DXGI.MapFlags.Read, out DataStream ds);
@@ -200,15 +217,15 @@ namespace Duplicator
                     var bprops = new SharpDX.Direct2D1.BitmapProperties();
                     bprops.PixelFormat = new SharpDX.Direct2D1.PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Ignore);
                     var size = new Size2(
-                        _output.Description.DesktopBounds.Right - _output.Description.DesktopBounds.Left,
-                        _output.Description.DesktopBounds.Bottom - _output.Description.DesktopBounds.Top
+                        output.Description.DesktopBounds.Right - output.Description.DesktopBounds.Left,
+                        output.Description.DesktopBounds.Bottom - output.Description.DesktopBounds.Top
                         );
 
                     using (var bmp = new SharpDX.Direct2D1.Bitmap(dcrt, size, ds, map.Pitch, bprops))
                     {
-                        dcrt.BindDeviceContext(hdc, new RawRectangle(0, 0, width, height));
+                        dcrt.BindDeviceContext(Hdc, new RawRectangle(0, 0, Width, Height));
                         dcrt.BeginDraw();
-                        dcrt.DrawBitmap(bmp, new RawRectangleF(0, 0, width, height), 1, SharpDX.Direct2D1.BitmapInterpolationMode.Linear);
+                        dcrt.DrawBitmap(bmp, new RawRectangleF(0, 0, Width, Height), 1, SharpDX.Direct2D1.BitmapInterpolationMode.Linear);
                         dcrt.EndDraw();
                     }
                 }
@@ -219,6 +236,7 @@ namespace Duplicator
         {
             _duplicating = false;
             Interlocked.Exchange(ref _thread, null)?.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
+            Interlocked.Exchange(ref _frame, null)?.Dispose();
             Interlocked.Exchange(ref _dcrt, null)?.Dispose();
             Interlocked.Exchange(ref _dest, null)?.Dispose();
             Interlocked.Exchange(ref _output, null)?.Dispose();
