@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.27130.2027
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WinDuplicator", "WinDuplicator\WinDuplicator.csproj", "{2E9FC0E9-8589-4245-A222-F13CFA0EF29A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Duplicator", "Duplicator\Duplicator.csproj", "{AD8CFC36-9DFF-4429-8E08-698CEDD35F1E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2E9FC0E9-8589-4245-A222-F13CFA0EF29A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2E9FC0E9-8589-4245-A222-F13CFA0EF29A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2E9FC0E9-8589-4245-A222-F13CFA0EF29A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2E9FC0E9-8589-4245-A222-F13CFA0EF29A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AD8CFC36-9DFF-4429-8E08-698CEDD35F1E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AD8CFC36-9DFF-4429-8E08-698CEDD35F1E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AD8CFC36-9DFF-4429-8E08-698CEDD35F1E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AD8CFC36-9DFF-4429-8E08-698CEDD35F1E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4A11A695-103B-46D2-8D32-7E67283FD688}
+	EndGlobalSection
+EndGlobal
