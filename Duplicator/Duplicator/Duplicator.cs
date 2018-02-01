@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.Eventing;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -12,6 +13,8 @@ using SharpDX.Direct3D11;
 using SharpDX.DirectWrite;
 using SharpDX.DXGI;
 using SharpDX.Mathematics.Interop;
+using SharpDX.MediaFoundation;
+using SharpDX.Multimedia;
 
 namespace Duplicator
 {
@@ -20,16 +23,25 @@ namespace Duplicator
         // use that guid in TraceSpy's ETW Trace Provider (https://github.com/smourier/TraceSpy)
         private static EventProvider _provider = new EventProvider(new Guid("964d4572-adb9-4f3a-8170-fcbecec27465"));
 
-        private Timer _timer;
-        private Thread _thread;
-        private TextFormat _textFormat;
-        private Brush _diagsBrush;
-        private int _accumulatedFrames;
-        private int _frameNumber;
-        private int _frameRate;
+        // recording
+        private volatile bool _recording;
+        private SinkWriter _sinkWriter;
+        private static bool _mfStarted;
+        private int _videoOutputIndex;
+        private long _recordingTime;
+        private DXGIDeviceManager _devManager;
+
+        // duplicating
         private volatile bool _duplicating;
-        private DeviceContextRenderTarget _dcrt;
-        private Texture2D _dest;
+        private System.Threading.Timer _frameRateTimer;
+        private Thread _duplicationThread;
+        private TextFormat _diagsTextFormat;
+        private Brush _diagsBrush;
+        private int _accumulatedFramesCount;
+        private int _currentFrameNumber;
+        private int _currentFrameRate;
+        private DeviceContextRenderTarget _renderTarget;
+        private Texture2D _frameCopy;
         private SharpDX.Direct3D11.Device _device;
         private Output1 _output;
         private OutputDuplication _outputDuplication;
@@ -58,6 +70,7 @@ namespace Duplicator
         public DuplicatorOptions Options { get; }
         public SharpDX.DXGI.Resource Frame { get => _frame; set => _frame = value; }
         public IntPtr Hdc { get; set; }
+        public string RecordFilePath { get; set; }
         public Size2 DesktopSize { get; private set; }
         public Size2 RenderSize { get; private set; }
         public Size2 Size
@@ -84,6 +97,35 @@ namespace Duplicator
             }
         }
 
+        public bool IsRecording
+        {
+            get => _recording;
+            set
+            {
+                if (_recording == value)
+                    return;
+
+                DisposeRecording();
+                _recording = value;
+                if (value)
+                {
+                    if (!IsRecording)
+                        return;
+
+                    InitRecording();
+                }
+                else
+                {
+                    if (_sinkWriter != null)
+                    {
+                        _sinkWriter.Finalize();
+                        _sinkWriter.Dispose();
+                        _sinkWriter = null;
+                    }
+                }
+            }
+        }
+
         public bool IsDuplicating
         {
             get => _duplicating;
@@ -92,26 +134,106 @@ namespace Duplicator
                 if (_duplicating == value)
                     return;
 
-                Dispose();
+                DisposeDuplication();
                 _duplicating = value;
                 if (value)
                 {
-                    Init();
+                    InitDuplication();
                     Size = Size;
-                    _thread = new Thread(Duplicate);
-                    _thread.Name = nameof(Duplicator) + Environment.TickCount;
-                    _thread.IsBackground = true;
-                    _thread.Start();
+                    _duplicationThread = new Thread(DuplicateThreadCallback);
+                    _duplicationThread.Name = nameof(Duplicator) + Environment.TickCount;
+                    _duplicationThread.IsBackground = true;
+                    _duplicationThread.Start();
+                }
+                else
+                {
+                    IsRecording = false;
                 }
             }
         }
 
-        private void Init()
+        private void InitRecording()
         {
-            _timer = new Timer((state) =>
+            if (!_mfStarted)
             {
-                _frameRate = _frameNumber;
-                _frameNumber = 0;
+                MediaManager.Startup();
+                _mfStarted = true;
+            }
+
+            if (string.IsNullOrEmpty(RecordFilePath))
+            {
+                RecordFilePath = Options.GetNewFilePath();
+            }
+
+            string dir = Path.GetDirectoryName(RecordFilePath);
+            if (!Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            int width = DesktopSize.Width;
+            int height = DesktopSize.Height;
+            _devManager = new DXGIDeviceManager();
+            MediaFactory.CreateDXGIDeviceManager(out int token, _devManager);
+            _devManager.ResetDevice(_device);
+
+            using (var mt = new MediaType())
+            {
+                //mt.Set(SinkWriterAttributeKeys.LowLatency, true);
+                mt.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, 1);
+                mt.Set(SinkWriterAttributeKeys.D3DManager, _devManager);
+                _sinkWriter = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, mt);
+            }
+
+            using (var output = new MediaType())
+            {
+                output.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                output.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
+                output.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
+                output.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
+                //output.Set(MediaTypeAttributeKeys.Mpeg2Profile, 100);
+
+                _sinkWriter.AddStream(output, out _videoOutputIndex);
+            }
+
+            using (var input = new MediaType())
+            {
+                input.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Argb32);
+                input.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
+                input.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
+                input.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
+                _sinkWriter.SetInputMediaType(_videoOutputIndex, input, null);
+            }
+
+            _sinkWriter.BeginWriting();
+        }
+
+        private void WriteFrame()
+        {
+            using (var sample = MediaFactory.CreateSample())
+            {
+                MediaFactory.CreateDXGISurfaceBuffer(typeof(Texture2D).GUID, Frame, 0, new RawBool(true), out MediaBuffer buffer);
+                using (buffer)
+                {
+                    //  100-nanosecond units
+                    sample.SampleTime = _recordingTime;
+                    sample.SampleDuration = 10 * 1000 * 1000 / Options.RecordingFrameRate;
+                    buffer.CurrentLength = buffer.QueryInterface<Buffer2D>().ContiguousLength;
+                    sample.AddBuffer(buffer);
+                    _sinkWriter.WriteSample(_videoOutputIndex, sample);
+
+                    _recordingTime += sample.SampleDuration;
+                }
+            }
+        }
+
+        private void InitDuplication()
+        {
+            _frameRateTimer = new System.Threading.Timer((state) =>
+            {
+                _currentFrameRate = _currentFrameNumber;
+                _currentFrameNumber = 0;
             }, null, 0, 1000);
 
             using (var fac = new SharpDX.DXGI.Factory1())
@@ -121,7 +243,7 @@ namespace Duplicator
                     if (adapter == null)
                         return;
 
-                    var flags = DeviceCreationFlags.BgraSupport;
+                    var flags = DeviceCreationFlags.None;
 #if DEBUG
                     flags |= DeviceCreationFlags.Debug;
 #endif
@@ -139,8 +261,8 @@ namespace Duplicator
 
             using (var fac = new SharpDX.DirectWrite.Factory1())
             {
-                _textFormat = new TextFormat(fac, "Lucida Console", 16);
-                _textFormat.WordWrapping = WordWrapping.Character;
+                _diagsTextFormat = new TextFormat(fac, "Lucida Console", 16);
+                _diagsTextFormat.WordWrapping = WordWrapping.Character;
             }
         }
 
@@ -161,8 +283,8 @@ namespace Duplicator
             try
             {
                 od.AcquireNextFrame(Options.FrameAcquisitionTimeout, out OutputDuplicateFrameInformation frameInfo, out resource);
-                _frameNumber++;
-                _accumulatedFrames = frameInfo.AccumulatedFrames;
+                _currentFrameNumber++;
+                _accumulatedFramesCount = frameInfo.AccumulatedFrames;
 
                 if (frameInfo.LastMouseUpdateTime != 0)
                 {
@@ -183,7 +305,7 @@ namespace Duplicator
                 // DXGI_ERROR_ACCESS_LOST
                 if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Code)
                 {
-                    Init();
+                    InitDuplication();
                     return false;
                 }
 
@@ -194,7 +316,7 @@ namespace Duplicator
             return true;
         }
 
-        private void Duplicate()
+        private void DuplicateThreadCallback()
         {
             var sw = new Stopwatch();
             sw.Start();
@@ -203,15 +325,23 @@ namespace Duplicator
                 if (!_duplicating)
                     return;
 
-                if (TryGetFrame())
+                try
                 {
-                    var e = new CancelEventArgs();
-                    FrameAcquired?.Invoke(this, e);
-                    if (e.Cancel)
+                    if (TryGetFrame())
                     {
-                        _duplicating = false;
-                        return;
+                        var e = new CancelEventArgs();
+                        FrameAcquired?.Invoke(this, e);
+                        if (e.Cancel)
+                        {
+                            _duplicating = false;
+                            return;
+                        }
                     }
+                }
+                catch (Exception ex)
+                {
+                    Trace("An error occured: " + ex);
+                    // continue
                 }
             }
             while (true);
@@ -234,8 +364,8 @@ namespace Duplicator
             if (device == null)
                 return;
 
-            var dcrt = _dcrt;
-            var dest = _dest;
+            var dcrt = _renderTarget;
+            var dest = _frameCopy;
             if (dest == null)
             {
                 var desc = new Texture2DDescription()
@@ -253,8 +383,7 @@ namespace Duplicator
                 };
 
                 dest = new Texture2D(device, desc);
-                _dest = dest;
-                Trace("dest created");
+                _frameCopy = dest;
             }
 
             if (dcrt == null)
@@ -264,8 +393,7 @@ namespace Duplicator
                     var props = new RenderTargetProperties();
                     props.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Ignore);
                     dcrt = new DeviceContextRenderTarget(fac, props);
-                    _dcrt = dcrt;
-                    Trace("dcrt created");
+                    _renderTarget = dcrt;
 
                     _diagsBrush = new SolidColorBrush(dcrt, new RawColor4(1, 0, 0, 1));
                 }
@@ -295,20 +423,18 @@ namespace Duplicator
                     }
 
                     var diags = new List<string>();
-                    //diags.Add(_pointerPosition.X + "x" + _pointerPosition.Y + " hs: " + _pointerHotspot.X + "x" + _pointerHotspot.Y);
                     if (Options.ShowInputFps)
                     {
-                        diags.Add(_frameRate + " fps");
+                        diags.Add(_currentFrameRate + " fps");
                     }
 
                     if (Options.ShowAccumulatedFrames)
                     {
-                        diags.Add(_accumulatedFrames + " af");
+                        diags.Add(_accumulatedFramesCount + " af");
                     }
 
                     if (Options.ShowCursor && _pointerVisible)
                     {
-                        diags.Add("T " + _pointerType + " Pt " + _pointerHotspot.X + "x" + _pointerHotspot.Y);
                         var pb = _pointerBitmap;
                         if (pb != null)
                         {
@@ -341,7 +467,7 @@ namespace Duplicator
 
                     if (diags.Count > 0)
                     {
-                        dcrt.DrawText(string.Join(Environment.NewLine, diags), _textFormat, new RawRectangleF(0, 0, Size.Width, Size.Height), _diagsBrush);
+                        dcrt.DrawText(string.Join(Environment.NewLine, diags), _diagsTextFormat, new RawRectangleF(0, 0, Size.Width, Size.Height), _diagsBrush);
                     }
 
                     dcrt.EndDraw();
@@ -351,17 +477,32 @@ namespace Duplicator
 
         public void Dispose()
         {
-            _frameRate = 0;
-            _frameNumber = 0;
+            DisposeRecording();
+            DisposeDuplication();
+#if DEBUG
+            DXGIReportLiveObjects();
+#endif
+        }
+
+        private void DisposeRecording()
+        {
+            Interlocked.Exchange(ref _sinkWriter, null)?.Dispose();
+            Interlocked.Exchange(ref _devManager, null)?.Dispose();
+        }
+
+        private void DisposeDuplication()
+        {
+            _currentFrameRate = 0;
+            _currentFrameNumber = 0;
             _duplicating = false;
-            Interlocked.Exchange(ref _timer, null)?.Dispose();
-            Interlocked.Exchange(ref _thread, null)?.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
+            Interlocked.Exchange(ref _frameRateTimer, null)?.Dispose();
+            Interlocked.Exchange(ref _duplicationThread, null)?.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
             Interlocked.Exchange(ref _pointerBitmap, null)?.Dispose();
-            Interlocked.Exchange(ref _textFormat, null)?.Dispose();
+            Interlocked.Exchange(ref _diagsTextFormat, null)?.Dispose();
             Interlocked.Exchange(ref _diagsBrush, null)?.Dispose();
             Interlocked.Exchange(ref _frame, null)?.Dispose();
-            Interlocked.Exchange(ref _dcrt, null)?.Dispose();
-            Interlocked.Exchange(ref _dest, null)?.Dispose();
+            Interlocked.Exchange(ref _renderTarget, null)?.Dispose();
+            Interlocked.Exchange(ref _frameCopy, null)?.Dispose();
             Interlocked.Exchange(ref _output, null)?.Dispose();
             Interlocked.Exchange(ref _outputDuplication, null)?.Dispose();
 #if DEBUG
@@ -393,7 +534,7 @@ namespace Duplicator
             if (od == null)
                 return;
 
-            var dcrt = _dcrt;
+            var dcrt = _renderTarget;
             if (dcrt == null)
                 return;
 
@@ -505,5 +646,44 @@ namespace Duplicator
         }
 
         private static void Trace(object value, [CallerMemberName] string methodName = null) => _provider.WriteMessageEvent(methodName + ": " + string.Format("{0}", value), 0, 0);
+
+#if DEBUG
+        private static void DXGIReportLiveObjects() => DXGIReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_FLAGS.DXGI_DEBUG_RLO_ALL);
+        private static void DXGIReportLiveObjects(Guid apiid) => DXGIReportLiveObjects(apiid, DXGI_DEBUG_RLO_FLAGS.DXGI_DEBUG_RLO_ALL);
+        private static void DXGIReportLiveObjects(Guid apiid, DXGI_DEBUG_RLO_FLAGS flags)
+        {
+            DXGIGetDebugInterface(typeof(IDXGIDebug).GUID, out IDXGIDebug debug);
+            if (debug == null)
+                return;
+
+            debug.ReportLiveObjects(apiid, flags);
+            Marshal.ReleaseComObject(debug);
+        }
+
+        [DllImport("Dxgidebug")]
+        private static extern int DXGIGetDebugInterface([MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IDXGIDebug debug);
+
+        private enum DXGI_DEBUG_RLO_FLAGS
+        {
+            DXGI_DEBUG_RLO_SUMMARY = 0x1,
+            DXGI_DEBUG_RLO_DETAIL = 0x2,
+            DXGI_DEBUG_RLO_IGNORE_INTERNAL = 0x4,
+            DXGI_DEBUG_RLO_ALL = 0x7
+        }
+
+        private static Guid DXGI_DEBUG_ALL = new Guid("e48ae283-da80-490b-87e6-43e9a9cfda08");
+        private static Guid DXGI_DEBUG_DX = new Guid("35cdd7fc-13b2-421d-a5d7-7e4451287d64");
+        private static Guid DXGI_DEBUG_DXGI = new Guid("25cddaa4-b1c6-47e1-ac3e-98875b5a2e2a");
+        private static Guid DXGI_DEBUG_APP = new Guid("06cd6e01-4219-4ebd-8709-27ed23360c62");
+        private static Guid DXGI_DEBUG_D3D10 = new Guid("243b4c52-3606-4d3a-99d7-a7e7b33ed706");
+        private static Guid DXGI_DEBUG_D3D11 = new Guid("4b99317b-ac39-4aa6-bb0b-baa04784798f");
+        private static Guid DXGI_DEBUG_D3D12 = new Guid("cf59a98c-a950-4326-91ef-9bbaa17bfd95");
+
+        [Guid("119e7452-de9e-40fe-8806-88f90c12b441"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IDXGIDebug
+        {
+            void ReportLiveObjects(Guid apiid, DXGI_DEBUG_RLO_FLAGS flags);
+        }
+#endif
     }
 }

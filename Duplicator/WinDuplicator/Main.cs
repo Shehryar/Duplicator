@@ -1,6 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Drawing;
+using System.IO;
 using System.Reflection;
 using System.Windows.Forms;
 
@@ -22,6 +23,7 @@ namespace WinDuplicator
             Icon = EmbeddedIcon;
             _options = new WinDuplicatorOptions();
             propertyGridMain.SelectedObject = _options;
+
             _duplicator = new Duplicator.Duplicator(_options);
             _duplicator.FrameAcquired += OnFrameAcquired;
             _duplicator.Size = new SharpDX.Size2(splitContainerMain.Panel1.Width, splitContainerMain.Panel1.Height);
@@ -63,6 +65,27 @@ namespace WinDuplicator
         private void checkBoxDuplicate_CheckedChanged(object sender, EventArgs e)
         {
             _duplicator.IsDuplicating = checkBoxDuplicate.Checked;
+            checkBoxRecord.Enabled = _duplicator.IsDuplicating;
+            if (!_duplicator.IsDuplicating)
+            {
+                checkBoxRecord.Checked = false;
+            }
+        }
+
+        private void buttonAbout_Click(object sender, EventArgs e)
+        {
+            string version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyFileVersionAttribute>().Version;
+            string cr = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyCopyrightAttribute>().Copyright;
+            MessageBox.Show(this, "Duplicator V" + version + Environment.NewLine + cr, "About Duplicator", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void checkBoxRecord_CheckedChanged(object sender, EventArgs e)
+        {
+            _duplicator.IsRecording = checkBoxRecord.Checked;
+            if (!string.IsNullOrEmpty(_duplicator.RecordFilePath))
+            {
+                Text = "Duplicator - Recording " + Path.GetFileName(_duplicator.RecordFilePath);
+            }
         }
     }
 }

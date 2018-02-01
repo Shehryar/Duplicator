@@ -31,6 +31,8 @@
             this.splitContainerMain = new System.Windows.Forms.SplitContainer();
             this.tableLayoutPanelMain = new System.Windows.Forms.TableLayoutPanel();
             this.panelCommands = new System.Windows.Forms.Panel();
+            this.buttonAbout = new System.Windows.Forms.Button();
+            this.checkBoxRecord = new System.Windows.Forms.CheckBox();
             this.checkBoxDuplicate = new System.Windows.Forms.CheckBox();
             this.buttonQuit = new System.Windows.Forms.Button();
             this.propertyGridMain = new System.Windows.Forms.PropertyGrid();
@@ -74,6 +76,8 @@
             // 
             // panelCommands
             // 
+            this.panelCommands.Controls.Add(this.buttonAbout);
+            this.panelCommands.Controls.Add(this.checkBoxRecord);
             this.panelCommands.Controls.Add(this.checkBoxDuplicate);
             this.panelCommands.Controls.Add(this.buttonQuit);
             this.panelCommands.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -83,6 +87,30 @@
             this.panelCommands.Size = new System.Drawing.Size(345, 30);
             this.panelCommands.TabIndex = 1;
             // 
+            // buttonAbout
+            // 
+            this.buttonAbout.DialogResult = System.Windows.Forms.DialogResult.OK;
+            this.buttonAbout.Location = new System.Drawing.Point(3, 4);
+            this.buttonAbout.Name = "buttonAbout";
+            this.buttonAbout.Size = new System.Drawing.Size(75, 23);
+            this.buttonAbout.TabIndex = 0;
+            this.buttonAbout.Text = "&About...";
+            this.buttonAbout.UseVisualStyleBackColor = true;
+            this.buttonAbout.Click += new System.EventHandler(this.buttonAbout_Click);
+            // 
+            // checkBoxRecord
+            // 
+            this.checkBoxRecord.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
+            this.checkBoxRecord.AutoSize = true;
+            this.checkBoxRecord.Enabled = false;
+            this.checkBoxRecord.Location = new System.Drawing.Point(101, 8);
+            this.checkBoxRecord.Name = "checkBoxRecord";
+            this.checkBoxRecord.Size = new System.Drawing.Size(61, 17);
+            this.checkBoxRecord.TabIndex = 1;
+            this.checkBoxRecord.Text = "&Record";
+            this.checkBoxRecord.UseVisualStyleBackColor = true;
+            this.checkBoxRecord.CheckedChanged += new System.EventHandler(this.checkBoxRecord_CheckedChanged);
+            // 
             // checkBoxDuplicate
             // 
             this.checkBoxDuplicate.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
@@ -90,7 +118,7 @@
             this.checkBoxDuplicate.Location = new System.Drawing.Point(180, 8);
             this.checkBoxDuplicate.Name = "checkBoxDuplicate";
             this.checkBoxDuplicate.Size = new System.Drawing.Size(71, 17);
-            this.checkBoxDuplicate.TabIndex = 1;
+            this.checkBoxDuplicate.TabIndex = 2;
             this.checkBoxDuplicate.Text = "&Duplicate";
             this.checkBoxDuplicate.UseVisualStyleBackColor = true;
             this.checkBoxDuplicate.CheckedChanged += new System.EventHandler(this.checkBoxDuplicate_CheckedChanged);
@@ -102,7 +130,7 @@
             this.buttonQuit.Location = new System.Drawing.Point(266, 4);
             this.buttonQuit.Name = "buttonQuit";
             this.buttonQuit.Size = new System.Drawing.Size(75, 23);
-            this.buttonQuit.TabIndex = 0;
+            this.buttonQuit.TabIndex = 3;
             this.buttonQuit.Text = "&Quit";
             this.buttonQuit.UseVisualStyleBackColor = true;
             this.buttonQuit.Click += new System.EventHandler(this.buttonQuit_Click);
@@ -114,7 +142,7 @@
             this.propertyGridMain.Location = new System.Drawing.Point(3, 3);
             this.propertyGridMain.Name = "propertyGridMain";
             this.propertyGridMain.Size = new System.Drawing.Size(339, 279);
-            this.propertyGridMain.TabIndex = 2;
+            this.propertyGridMain.TabIndex = 0;
             this.propertyGridMain.ToolbarVisible = false;
             // 
             // Main
@@ -144,6 +172,8 @@
         private System.Windows.Forms.Button buttonQuit;
         private System.Windows.Forms.PropertyGrid propertyGridMain;
         private System.Windows.Forms.CheckBox checkBoxDuplicate;
+        private System.Windows.Forms.CheckBox checkBoxRecord;
+        private System.Windows.Forms.Button buttonAbout;
     }
 }
 

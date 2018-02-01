@@ -1,11 +1,9 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Drawing.Design;
-using System.Linq;
 using System.Windows.Forms;
 using System.Windows.Forms.Design;
 using Duplicator;
-using SharpDX.DXGI;
 
 namespace WinDuplicator
 {

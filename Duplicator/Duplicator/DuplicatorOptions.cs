@@ -1,6 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using SharpDX.DXGI;
@@ -13,6 +14,7 @@ namespace Duplicator
         public const string RecordingCategory = "Recording";
         public const string InputCategory = "Input";
         public const string DiagnosticsCategory = "Diagnostics";
+        private const string DefaultFileFormat = "Capture_{0:yyyy_MM_dd_hh_mm_ss}.mp4";
 
         public DuplicatorOptions()
         {
@@ -31,11 +33,31 @@ namespace Duplicator
             FrameAcquisitionTimeout = 500;
             ShowCursor = true;
             PreserveRatio = true;
+            RecordingFrameRate = 60;
+            OutputFileFormat = DefaultFileFormat;
+            OutputDirectoryPath = GetDefaultOutputDirectoryPath();
         }
+
+        [DisplayName("File Format")]
+        [Category(RecordingCategory)]
+        [DefaultValue(DefaultFileFormat)]
+        public virtual string OutputFileFormat { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Directory Path")]
         [Category(RecordingCategory)]
         public virtual string OutputDirectoryPath { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Frame Rate")]
+        [Category(RecordingCategory)]
+        [DefaultValue(60)]
+        public virtual int RecordingFrameRate
+        {
+            get => DictionaryObjectGetPropertyValue<int>();
+            set
+            {
+                DictionaryObjectSetPropertyValue(Math.Max(0, value));
+            }
+        }
 
         [DisplayName("Video Adapter")]
         [Category(InputCategory)]
@@ -56,7 +78,7 @@ namespace Duplicator
         [DefaultValue(false)]
         public virtual bool IsCursorProportional { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
-        [DisplayName("Show Acquisition Fps")]
+        [DisplayName("Show Acquisition Rate")]
         [Category(DiagnosticsCategory)]
         [DefaultValue(false)]
         public virtual bool ShowInputFps { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
@@ -102,6 +124,34 @@ namespace Duplicator
 
                 return output.QueryInterface<Output1>();
             }
+        }
+
+        public static string GetDefaultOutputDirectoryPath()
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Duplicator");
+            if (!Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+            return dir;
+        }
+
+        public string GetNewFilePath()
+        {
+            var dir = OutputDirectoryPath;
+            if (string.IsNullOrWhiteSpace(dir))
+            {
+                dir = GetDefaultOutputDirectoryPath();
+            }
+
+            string format = OutputFileFormat;
+            if (string.IsNullOrEmpty(OutputFileFormat))
+            {
+                format = DefaultFileFormat;
+            }
+
+            string fileName = string.Format(format, DateTime.Now);
+            return Path.Combine(dir, fileName);
         }
 
         public static string GetDisplayDeviceName(string deviceName)
