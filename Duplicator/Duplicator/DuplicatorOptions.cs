@@ -47,6 +47,10 @@ namespace Duplicator
         [Category(InputCategory)]
         public virtual bool ShowCursor { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
+        [DisplayName("Proportional Cursor")]
+        [Category(InputCategory)]
+        public virtual bool IsCursorProportional { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
         [DisplayName("Show Acquisition Fps")]
         [Category(InputCategory)]
         public virtual bool ShowInputFps { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
@@ -79,7 +83,11 @@ namespace Duplicator
         {
             using (var adapter = GetAdapter())
             {
-                return adapter.Outputs.FirstOrDefault(o => o.Description.DeviceName == Output).QueryInterface<Output1>();
+                var output = adapter.Outputs.FirstOrDefault(o => o.Description.DeviceName == Output);
+                if (output == null)
+                    return null; // this can happen if the adapter is not connected to a display
+
+                return output.QueryInterface<Output1>();
             }
         }
 
