@@ -1,14 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-using System.Data;
 using System.Drawing;
-using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
-using Duplicator;
 
 namespace WinDuplicator
 {
@@ -30,13 +24,11 @@ namespace WinDuplicator
             propertyGridMain.SelectedObject = _options;
             _duplicator = new Duplicator.Duplicator(_options);
             _duplicator.FrameAcquired += OnFrameAcquired;
-            _duplicator.Width = splitContainerMain.Panel1.Width;
-            _duplicator.Height = splitContainerMain.Panel1.Height;
+            _duplicator.Size = new SharpDX.Size2(splitContainerMain.Panel1.Width, splitContainerMain.Panel1.Height);
 
             splitContainerMain.Panel1.SizeChanged += (sender, e) =>
             {
-                _duplicator.Width = splitContainerMain.Panel1.Width;
-                _duplicator.Height = splitContainerMain.Panel1.Height;
+                _duplicator.Size = new SharpDX.Size2(splitContainerMain.Panel1.Width, splitContainerMain.Panel1.Height);
             };
 
             splitContainerMain.Panel1.HandleCreated += (sender, e) =>

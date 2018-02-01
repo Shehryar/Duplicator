@@ -9,8 +9,10 @@ namespace Duplicator
 {
     public class DuplicatorOptions : DictionaryObject
     {
-        public const string OutputCategory = "Output";
+        public const string DisplayCategory = "Display Rendering";
+        public const string RecordingCategory = "Recording";
         public const string InputCategory = "Input";
+        public const string DiagnosticsCategory = "Diagnostics";
 
         public DuplicatorOptions()
         {
@@ -28,10 +30,11 @@ namespace Duplicator
             Output = adapter.Outputs.First().Description.DeviceName;
             FrameAcquisitionTimeout = 500;
             ShowCursor = true;
+            PreserveRatio = true;
         }
 
         [DisplayName("Directory Path")]
-        [Category(OutputCategory)]
+        [Category(RecordingCategory)]
         public virtual string OutputDirectoryPath { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Video Adapter")]
@@ -44,23 +47,33 @@ namespace Duplicator
         public virtual string Output { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Show Cursor")]
-        [Category(InputCategory)]
+        [Category(DisplayCategory)]
+        [DefaultValue(true)]
         public virtual bool ShowCursor { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Proportional Cursor")]
-        [Category(InputCategory)]
+        [Category(DisplayCategory)]
+        [DefaultValue(false)]
         public virtual bool IsCursorProportional { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Show Acquisition Fps")]
-        [Category(InputCategory)]
+        [Category(DiagnosticsCategory)]
+        [DefaultValue(false)]
         public virtual bool ShowInputFps { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
+        [DisplayName("Preserve Input Ratio")]
+        [Category(DisplayCategory)]
+        [DefaultValue(true)]
+        public virtual bool PreserveRatio { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
         [DisplayName("Show Accumulated Frames")]
-        [Category(InputCategory)]
+        [Category(DiagnosticsCategory)]
+        [DefaultValue(false)]
         public virtual bool ShowAccumulatedFrames { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Frame Acquisition Timeout")]
         [Category(InputCategory)]
+        [DefaultValue(500)]
         public virtual int FrameAcquisitionTimeout
         {
             get => DictionaryObjectGetPropertyValue<int>();

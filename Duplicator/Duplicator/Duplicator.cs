@@ -33,9 +33,12 @@ namespace Duplicator
         private SharpDX.Direct3D11.Device _device;
         private Output1 _output;
         private OutputDuplication _outputDuplication;
-        private OutputDuplicateFrameInformation _frameInfo;
         private Bitmap _pointerBitmap;
+        private RawPoint _pointerPosition;
         private RawPoint _pointerHotspot;
+        private bool _pointerVisible;
+        private int _pointerType;
+        private Size2 _size;
         private SharpDX.DXGI.Resource _frame;
 #if DEBUG
         private DeviceDebug _deviceDebug;
@@ -55,8 +58,31 @@ namespace Duplicator
         public DuplicatorOptions Options { get; }
         public SharpDX.DXGI.Resource Frame { get => _frame; set => _frame = value; }
         public IntPtr Hdc { get; set; }
-        public int Width { get; set; }
-        public int Height { get; set; }
+        public Size2 DesktopSize { get; private set; }
+        public Size2 RenderSize { get; private set; }
+        public Size2 Size
+        {
+            get => _size;
+            set
+            {
+                _size = value;
+                if (Options.PreserveRatio && value.Height > 0 && value.Width > 0 && DesktopSize.Width > 0 && DesktopSize.Height > 0)
+                {
+                    if (value.Width * DesktopSize.Height > value.Height * DesktopSize.Width)
+                    {
+                        RenderSize = new Size2((value.Height * DesktopSize.Width) / DesktopSize.Height, value.Height);
+                    }
+                    else
+                    {
+                        RenderSize = new Size2(value.Width, (value.Width * DesktopSize.Height) / DesktopSize.Width);
+                    }
+                }
+                else
+                {
+                    RenderSize = value;
+                }
+            }
+        }
 
         public bool IsDuplicating
         {
@@ -71,6 +97,7 @@ namespace Duplicator
                 if (value)
                 {
                     Init();
+                    Size = Size;
                     _thread = new Thread(Duplicate);
                     _thread.Name = nameof(Duplicator) + Environment.TickCount;
                     _thread.IsBackground = true;
@@ -103,13 +130,17 @@ namespace Duplicator
                     _deviceDebug = _device.QueryInterface<DeviceDebug>();
 #endif
                     _output = Options.GetOutput();
+                    DesktopSize = _output != null ? new Size2(
+                        _output.Description.DesktopBounds.Right - _output.Description.DesktopBounds.Left,
+                        _output.Description.DesktopBounds.Bottom - _output.Description.DesktopBounds.Top) : new Size2();
                     _outputDuplication = _output?.DuplicateOutput(_device);
                 }
             }
 
             using (var fac = new SharpDX.DirectWrite.Factory1())
             {
-                _textFormat = new TextFormat(fac, "Lucida Console", 20);
+                _textFormat = new TextFormat(fac, "Lucida Console", 16);
+                _textFormat.WordWrapping = WordWrapping.Character;
             }
         }
 
@@ -131,13 +162,16 @@ namespace Duplicator
             {
                 od.AcquireNextFrame(Options.FrameAcquisitionTimeout, out OutputDuplicateFrameInformation frameInfo, out resource);
                 _frameNumber++;
-                _accumulatedFrames = _frameInfo.AccumulatedFrames;
+                _accumulatedFrames = frameInfo.AccumulatedFrames;
 
-                // mouse moved?
                 if (frameInfo.LastMouseUpdateTime != 0)
                 {
-                    _frameInfo = frameInfo;
-                    ComputePointerBitmap();
+                    _pointerVisible = frameInfo.PointerPosition.Visible;
+                    _pointerPosition = frameInfo.PointerPosition.Position;
+                    if (frameInfo.PointerShapeBufferSize != 0)
+                    {
+                        ComputePointerBitmap(ref frameInfo);
+                    }
                 }
             }
             catch (SharpDXException ex)
@@ -185,7 +219,7 @@ namespace Duplicator
 
         public void RenderFrame()
         {
-            if (Hdc == IntPtr.Zero || Width == 0 || Height == 0)
+            if (Hdc == IntPtr.Zero || RenderSize.Width == 0 || RenderSize.Height == 0)
                 return;
 
             var frame = Frame;
@@ -209,8 +243,8 @@ namespace Duplicator
                     CpuAccessFlags = CpuAccessFlags.Read,
                     BindFlags = BindFlags.None,
                     Format = Format.B8G8R8A8_UNorm,
-                    Width = output.Description.DesktopBounds.Right - output.Description.DesktopBounds.Left,
-                    Height = output.Description.DesktopBounds.Bottom - output.Description.DesktopBounds.Top,
+                    Width = DesktopSize.Width,
+                    Height = DesktopSize.Height,
                     OptionFlags = ResourceOptionFlags.None,
                     MipLevels = 1,
                     ArraySize = 1,
@@ -220,7 +254,7 @@ namespace Duplicator
 
                 dest = new Texture2D(device, desc);
                 _dest = dest;
-
+                Trace("dest created");
             }
 
             if (dcrt == null)
@@ -228,9 +262,10 @@ namespace Duplicator
                 using (var fac = new SharpDX.Direct2D1.Factory1())
                 {
                     var props = new RenderTargetProperties();
-                    props.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Premultiplied);
+                    props.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Ignore);
                     dcrt = new DeviceContextRenderTarget(fac, props);
                     _dcrt = dcrt;
+                    Trace("dcrt created");
 
                     _diagsBrush = new SolidColorBrush(dcrt, new RawColor4(1, 0, 0, 1));
                 }
@@ -247,20 +282,20 @@ namespace Duplicator
                 using (ds)
                 {
                     var bprops = new BitmapProperties();
-                    bprops.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Premultiplied);
-                    var size = new Size2(
-                        output.Description.DesktopBounds.Right - output.Description.DesktopBounds.Left,
-                        output.Description.DesktopBounds.Bottom - output.Description.DesktopBounds.Top
-                        );
-
-                    dcrt.BindDeviceContext(Hdc, new RawRectangle(0, 0, Width, Height));
+                    bprops.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Ignore);
+                    dcrt.BindDeviceContext(Hdc, new RawRectangle(0, 0, Size.Width, Size.Height));
                     dcrt.BeginDraw();
-                    using (var bmp = new Bitmap(dcrt, size, ds, map.Pitch, bprops))
+                    dcrt.Clear(new RawColor4(1, 1, 1, 1));
+
+                    var renderX = (Size.Width - RenderSize.Width) / 2;
+                    var renderY = (Size.Height - RenderSize.Height) / 2;
+                    using (var bmp = new Bitmap(dcrt, DesktopSize, ds, map.Pitch, bprops))
                     {
-                        dcrt.DrawBitmap(bmp, new RawRectangleF(0, 0, Width, Height), 1, BitmapInterpolationMode.Linear);
+                        dcrt.DrawBitmap(bmp, new RawRectangleF(renderX, renderY, renderX + RenderSize.Width, renderY + RenderSize.Height), 1, BitmapInterpolationMode.Linear);
                     }
 
                     var diags = new List<string>();
+                    //diags.Add(_pointerPosition.X + "x" + _pointerPosition.Y + " hs: " + _pointerHotspot.X + "x" + _pointerHotspot.Y);
                     if (Options.ShowInputFps)
                     {
                         diags.Add(_frameRate + " fps");
@@ -271,30 +306,28 @@ namespace Duplicator
                         diags.Add(_accumulatedFrames + " af");
                     }
 
-                    if (Options.ShowCursor && _frameInfo.PointerPosition.Visible)
+                    if (Options.ShowCursor && _pointerVisible)
                     {
-                        diags.Add("Pt " + _pointerHotspot.X + "x" + _pointerHotspot.Y);
+                        diags.Add("T " + _pointerType + " Pt " + _pointerHotspot.X + "x" + _pointerHotspot.Y);
                         var pb = _pointerBitmap;
                         if (pb != null)
                         {
-                            int desktopWidth = output.Description.DesktopBounds.Right - output.Description.DesktopBounds.Left;
-                            int desktopHeight = output.Description.DesktopBounds.Bottom - output.Description.DesktopBounds.Top;
                             RawRectangleF rect;
 
                             if (Options.IsCursorProportional)
                             {
-                                int captureX = ((_frameInfo.PointerPosition.Position.X - _pointerHotspot.X) * Width) / desktopWidth;
-                                int captureY = ((_frameInfo.PointerPosition.Position.Y - _pointerHotspot.Y) * Height) / desktopHeight;
+                                int captureX = ((_pointerPosition.X - _pointerHotspot.X) * RenderSize.Width) / DesktopSize.Width + renderX;
+                                int captureY = ((_pointerPosition.Y - _pointerHotspot.Y) * RenderSize.Height) / DesktopSize.Height + renderY;
                                 rect = new RawRectangleF(
                                     captureX,
                                     captureY,
-                                    captureX + (pb.Size.Width * Width) / desktopWidth,
-                                    captureY + (pb.Size.Height * Height) / desktopHeight);
+                                    captureX + (pb.Size.Width * RenderSize.Width) / DesktopSize.Width,
+                                    captureY + (pb.Size.Height * RenderSize.Height) / DesktopSize.Height);
                             }
                             else
                             {
-                                int captureX = (_frameInfo.PointerPosition.Position.X * Width) / desktopWidth - _pointerHotspot.X;
-                                int captureY = (_frameInfo.PointerPosition.Position.Y * Height) / desktopHeight - _pointerHotspot.Y;
+                                int captureX = (_pointerPosition.X * RenderSize.Width) / DesktopSize.Width - _pointerHotspot.X + renderX;
+                                int captureY = (_pointerPosition.Y * RenderSize.Height) / DesktopSize.Height - _pointerHotspot.Y + renderY;
                                 rect = new RawRectangleF(
                                     captureX,
                                     captureY,
@@ -308,7 +341,7 @@ namespace Duplicator
 
                     if (diags.Count > 0)
                     {
-                        dcrt.DrawText(string.Join(", ", diags), _textFormat, new RawRectangleF(0, 0, Width, 0), _diagsBrush);
+                        dcrt.DrawText(string.Join(Environment.NewLine, diags), _textFormat, new RawRectangleF(0, 0, Size.Width, Size.Height), _diagsBrush);
                     }
 
                     dcrt.EndDraw();
@@ -339,20 +372,23 @@ namespace Duplicator
 
         private void OnOptionsChanged(object sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(DuplicatorOptions.Adapter) ||
-                e.PropertyName == nameof(DuplicatorOptions.Output))
+            switch (e.PropertyName)
             {
-                var duplicating = _duplicating;
-                IsDuplicating = false;
-                IsDuplicating = duplicating;
+                case nameof(DuplicatorOptions.Adapter):
+                case nameof(DuplicatorOptions.Output):
+                    var duplicating = _duplicating;
+                    IsDuplicating = false;
+                    IsDuplicating = duplicating;
+                    break;
+
+                case nameof(DuplicatorOptions.PreserveRatio):
+                    Size = Size;
+                    break;
             }
         }
 
-        private void ComputePointerBitmap()
+        private void ComputePointerBitmap(ref OutputDuplicateFrameInformation frameInfo)
         {
-            if (_frameInfo.PointerShapeBufferSize == 0)
-                return; // nothing to compute
-
             var od = _outputDuplication;
             if (od == null)
                 return;
@@ -368,11 +404,15 @@ namespace Duplicator
                 bmp.Dispose();
             }
 
-            var pointerShapeBuffer = Marshal.AllocHGlobal(_frameInfo.PointerShapeBufferSize);
+            var pointerShapeBuffer = Marshal.AllocHGlobal(frameInfo.PointerShapeBufferSize);
             OutputDuplicatePointerShapeInformation shapeInfo;
             try
             {
-                od.GetFramePointerShape(_frameInfo.PointerShapeBufferSize, pointerShapeBuffer, out int shapeInfoSize, out shapeInfo);
+                od.GetFramePointerShape(frameInfo.PointerShapeBufferSize, pointerShapeBuffer, out int shapeInfoSize, out shapeInfo);
+                //Trace("new pointer alloc size: " + frameInfo.PointerShapeBufferSize + " size:" + shapeInfo.Width + "x" + shapeInfo.Height +
+                //    " hs: " + shapeInfo.HotSpot.X + "x" + shapeInfo.HotSpot.Y +
+                //    " pitch: " + shapeInfo.Pitch + " type: " + shapeInfo.Type +
+                //    " pos: " + _pointerPosition.X + "x" + _pointerPosition.Y);
             }
             catch
             {
@@ -382,6 +422,7 @@ namespace Duplicator
 
             try
             {
+                _pointerType = shapeInfo.Type;
                 _pointerHotspot = shapeInfo.HotSpot;
                 int bufferSize;
                 int pitch;
@@ -397,7 +438,7 @@ namespace Duplicator
                 }
                 else // note: we do not handle DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR...
                 {
-                    bufferSize = _frameInfo.PointerShapeBufferSize;
+                    bufferSize = frameInfo.PointerShapeBufferSize;
                     size = new Size2(shapeInfo.Width, shapeInfo.Height);
                     pitch = shapeInfo.Pitch;
                 }
@@ -414,74 +455,55 @@ namespace Duplicator
 
         private static IntPtr ComputeMonochromePointerShape(OutputDuplicatePointerShapeInformation shapeInfo, IntPtr inBuffer, out int size)
         {
-            int xorOffset = shapeInfo.Pitch * (shapeInfo.Height / 2);
-            var andPtr = inBuffer;
-            var xorPtr = inBuffer + xorOffset;
-            size = shapeInfo.Width * shapeInfo.Height * 4;
+            const int bpp = 4;
+            size = shapeInfo.Width * (shapeInfo.Height / 2) * bpp;
             var ptr = Marshal.AllocHGlobal(size);
-            int bytesWidth = (shapeInfo.Width + 7) / 8;
-            int height = shapeInfo.Height / 2;
-            int width = shapeInfo.Width;
-
-            for (int j = 0; j < height; ++j)
+            for (int row = 0; row < shapeInfo.Height / 2; row++)
             {
-                int bit = 0x80;
-                for (int i = 0; i < shapeInfo.Width; ++i)
+                int mask = 0x80;
+                for (int col = 0; col < shapeInfo.Width; col++)
                 {
-                    int andByte = Marshal.ReadInt32(andPtr, j * bytesWidth + i / 8);
-                    int xorByte = Marshal.ReadInt32(xorPtr, j * bytesWidth + i / 8);
-                    int andBit = (andByte & bit) != 0 ? 1 : 0;
-                    int xorBit = (xorByte & bit) != 0 ? 1 : 0;
-                    int index = j * shapeInfo.Width * 4 + i * 4;
+                    var and = (Marshal.ReadByte(inBuffer, col / 8 + row * shapeInfo.Pitch) & mask) != 0;
+                    var xor = (Marshal.ReadByte(inBuffer, col / 8 + (row + (shapeInfo.Height / 2)) * shapeInfo.Pitch) & mask) != 0;
 
-                    if (0 == andBit)
+                    uint value;
+                    if (and)
                     {
-                        if (0 == xorBit)
+                        if (xor)
                         {
-                            Marshal.WriteInt32(ptr, index + 0, 0);
-                            Marshal.WriteInt32(ptr, index + 1, 0);
-                            Marshal.WriteInt32(ptr, index + 2, 0);
-                            Marshal.WriteInt32(ptr, index + 3, 0xff);
+                            value = 0xFF000000;
                         }
                         else
                         {
-                            Marshal.WriteInt32(ptr, index + 0, 0xff);
-                            Marshal.WriteInt32(ptr, index + 1, 0xff);
-                            Marshal.WriteInt32(ptr, index + 2, 0xff);
-                            Marshal.WriteInt32(ptr, index + 3, 0xff);
+                            value = 0x00000000;
                         }
                     }
                     else
                     {
-                        if (0 == xorBit)
+                        if (xor)
                         {
-                            Marshal.WriteInt32(ptr, index + 0, 0);
-                            Marshal.WriteInt32(ptr, index + 1, 0);
-                            Marshal.WriteInt32(ptr, index + 2, 0);
-                            Marshal.WriteInt32(ptr, index + 3, 0);
+                            value = 0xFFFFFFFF;
                         }
                         else
                         {
-                            Marshal.WriteInt32(ptr, index + 0, 0);
-                            Marshal.WriteInt32(ptr, index + 1, 0);
-                            Marshal.WriteInt32(ptr, index + 2, 0);
-                            Marshal.WriteInt32(ptr, index + 3, 0xff);
+                            value = 0xFF000000;
                         }
                     }
+                    Marshal.WriteInt32(ptr, row * shapeInfo.Width * bpp + col * bpp, (int)value);
 
-                    if (bit == 1)
+                    if (mask == 0x01)
                     {
-                        bit = 0x80;
+                        mask = 0x80;
                     }
                     else
                     {
-                        bit = bit >> 1;
+                        mask = mask >> 1;
                     }
                 }
             }
             return ptr;
         }
 
-        private static void Trace(object value, [CallerMemberName] string methodName = null) => _provider.WriteMessageEvent(string.Format("{0}", value), 0, 0);
+        private static void Trace(object value, [CallerMemberName] string methodName = null) => _provider.WriteMessageEvent(methodName + ": " + string.Format("{0}", value), 0, 0);
     }
 }
