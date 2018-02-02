@@ -25,12 +25,53 @@ namespace Duplicator
 
             list.Sort();
             InputTypes = list;
+            try
+            {
+                using (var tf = activate.ActivateObject<Transform>())
+                {
+                    IsBuiltin = IsBuiltinEncoder(tf);
+                }
+            }
+            catch
+            {
+                // do nothing
+            }
         }
 
         public string FriendlyName { get; }
         public Guid Clsid { get; }
         public IEnumerable<string> InputTypes { get; }
         public TransformEnumFlag Flags { get; }
+        public bool IsBuiltin { get; }
+        public override string ToString() => FriendlyName;
+
+        public static bool IsBuiltinEncoder(SinkWriter writer, int streamIndex)
+        {
+            if (writer == null)
+                throw new ArgumentNullException(nameof(writer));
+
+            IntPtr tf;
+            try
+            {
+                writer.GetServiceForStream(streamIndex, Guid.Empty, typeof(Transform).GUID, out tf);
+            }
+            catch
+            {
+                return false;
+            }
+            if (tf == IntPtr.Zero)
+                return false;
+
+            return Marshal.GetObjectForIUnknown(tf) as IMFObjectInformation != null;
+        }
+
+        public static bool IsBuiltinEncoder(Transform transform)
+        {
+            if (transform == null)
+                throw new ArgumentNullException(nameof(transform));
+
+            return Marshal.GetObjectForIUnknown(transform.NativePointer) as IMFObjectInformation != null;
+        }
 
         public static IEnumerable<H264Encoder> Enumerate() => Enumerate(TransformEnumFlag.All);
         public static IEnumerable<H264Encoder> Enumerate(TransformEnumFlag flags)
@@ -48,9 +89,18 @@ namespace Duplicator
         {
             var s = guid.ToString();
             if (s.EndsWith("0000-0010-8000-00aa00389b71"))
-                return new string(guid.ToByteArray().Take(4).Select(b => (char)b).ToArray());
+            {
+                var bytes = guid.ToByteArray();
+                if (bytes.Take(4).Any(b => b < 32 || b > 127))
+                    return s;
+
+                return new string(bytes.Take(4).Select(b => (char)b).ToArray());
+            }
 
             return s;
         }
+
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("CE6BE8E7-D757-435F-9DE9-BE3EF330B805")]
+        private interface IMFObjectInformation { }
     }
 }

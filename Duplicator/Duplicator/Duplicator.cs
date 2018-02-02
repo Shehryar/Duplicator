@@ -42,7 +42,7 @@ namespace Duplicator
         private int _currentFrameNumber;
         private int _currentFrameRate;
         private DeviceContextRenderTarget _renderTarget;
-        private Texture2D _frameCopy;
+        private Texture2D _copy;
         private SharpDX.Direct3D11.Device _device;
         private Output1 _output;
         private OutputDuplication _outputDuplication;
@@ -116,6 +116,7 @@ namespace Duplicator
                 {
                     if (_sinkWriter != null)
                     {
+                        _sinkWriter.NotifyEndOfSegment(_videoOutputIndex);
                         _sinkWriter.Finalize();
                     }
                     DisposeRecording();
@@ -178,46 +179,57 @@ namespace Duplicator
 
             using (var ma = new MediaAttributes())
             {
-                ma.Set(SinkWriterAttributeKeys.DisableThrottling, Options.DisableThrottling ? 1 : 0);
-                ma.Set(SinkWriterAttributeKeys.LowLatency, Options.LowLatency);
+                // note this doesn't mean you *will* have a hardware transform. Intel Media SDK sometimes is not happy with configuration for HDCP issues.
                 ma.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, Options.EnableHardwareTransforms ? 1 : 0);
                 ma.Set(SinkWriterAttributeKeys.D3DManager, _devManager);
+                ma.Set(SinkWriterAttributeKeys.DisableThrottling, Options.DisableThrottling ? 1 : 0);
+                ma.Set(SinkWriterAttributeKeys.LowLatency, Options.LowLatency);
                 _sinkWriter = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, ma);
             }
 
             using (var output = new MediaType())
             {
-                int bitrate = 4 * 8 * width * height * Options.RecordingFrameRate;
+                // avg bitrate is mandatory for builtin encoder, not for some others like Intel Media SDK
+                // in fact, what will that be used for? anyway, here is a standard formula from here
+                // https://stackoverflow.com/questions/5024114/suggested-compression-ratio-with-h-264
+                //
+                // [image width] x [image height] x [framerate] x [motion rank] x 0.07 = [desired bitrate]
+                //
+
+                int motionRank = 1;
+                int bitrate = (int)(width * height * Options.RecordingFrameRate * motionRank);
+                if (bitrate <= 0)
+                    throw new InvalidOperationException();
+
+                output.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
                 output.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 output.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
-                output.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
                 output.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
                 output.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
                 output.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
-                //output.Set(MediaTypeAttributeKeys.Mpeg2Profile, 100);
-
                 _sinkWriter.AddStream(output, out _videoOutputIndex);
             }
 
             using (var input = new MediaType())
             {
                 input.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-                input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Rgb32);
+                input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Argb32);
                 input.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
                 input.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
                 _sinkWriter.SetInputMediaType(_videoOutputIndex, input, null);
             }
 
+            bool bi = H264Encoder.IsBuiltinEncoder(_sinkWriter, _videoOutputIndex);
             _sinkWriter.BeginWriting();
             _watch.Start();
         }
 
         private void WriteFrame()
         {
-            if (!_recording)
+            if (!_recording || !_watch.IsRunning)
                 return;
 
-            var frame = _frameCopy;
+            var frame = _frame;
             if (frame == null)
                 return;
 
@@ -263,7 +275,7 @@ namespace Duplicator
                         return;
 
                     var flags = DeviceCreationFlags.BgraSupport;
-                    flags |= DeviceCreationFlags.VideoSupport;
+                    //flags |= DeviceCreationFlags.VideoSupport;
 #if DEBUG
                     flags |= DeviceCreationFlags.Debug;
 #endif
@@ -362,7 +374,7 @@ namespace Duplicator
                 }
                 catch (SharpDXException ex)
                 {
-                    Trace("An error occured: " + ex);
+                    System.Diagnostics.Trace.WriteLine("An error occured: " + ex);
                     // continue
                 }
             }
@@ -387,8 +399,8 @@ namespace Duplicator
                 return;
 
             var dcrt = _renderTarget;
-            var dest = _frameCopy;
-            if (dest == null)
+            var copy = _copy;
+            if (copy == null)
             {
                 var desc = new Texture2DDescription()
                 {
@@ -404,8 +416,8 @@ namespace Duplicator
                     Usage = ResourceUsage.Staging
                 };
 
-                dest = new Texture2D(device, desc);
-                _frameCopy = dest;
+                copy = new Texture2D(device, desc);
+                _copy = copy;
             }
 
             if (dcrt == null)
@@ -421,11 +433,11 @@ namespace Duplicator
                 }
             }
 
-            using (var surface = dest.QueryInterface<Surface>())
+            using (var surface = copy.QueryInterface<Surface>())
             {
                 using (var res = frame.QueryInterface<SharpDX.Direct3D11.Resource>())
                 {
-                    device.ImmediateContext.CopyResource(res, dest);
+                    device.ImmediateContext.CopyResource(res, copy);
                 }
 
                 var map = surface.Map(SharpDX.DXGI.MapFlags.Read, out DataStream ds);
@@ -512,6 +524,7 @@ namespace Duplicator
             Interlocked.Exchange(ref _devManager, null)?.Dispose();
             _watch.Stop();
             _lastNs = 0;
+            _videoOutputIndex = 0;
         }
 
         private void DisposeDuplication()
@@ -526,7 +539,7 @@ namespace Duplicator
             Interlocked.Exchange(ref _diagsBrush, null)?.Dispose();
             Interlocked.Exchange(ref _frame, null)?.Dispose();
             Interlocked.Exchange(ref _renderTarget, null)?.Dispose();
-            Interlocked.Exchange(ref _frameCopy, null)?.Dispose();
+            Interlocked.Exchange(ref _copy, null)?.Dispose();
             Interlocked.Exchange(ref _output, null)?.Dispose();
             Interlocked.Exchange(ref _outputDuplication, null)?.Dispose();
 #if DEBUG
