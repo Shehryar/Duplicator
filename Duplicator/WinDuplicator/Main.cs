@@ -74,9 +74,8 @@ namespace WinDuplicator
 
         private void buttonAbout_Click(object sender, EventArgs e)
         {
-            string version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyFileVersionAttribute>().Version;
-            string cr = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyCopyrightAttribute>().Copyright;
-            MessageBox.Show(this, "Duplicator V" + version + Environment.NewLine + cr, "About Duplicator", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            var about = new About();
+            about.ShowDialog(this);
         }
 
         private void checkBoxRecord_CheckedChanged(object sender, EventArgs e)

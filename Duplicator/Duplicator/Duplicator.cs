@@ -28,8 +28,9 @@ namespace Duplicator
         private SinkWriter _sinkWriter;
         private static bool _mfStarted;
         private int _videoOutputIndex;
-        private long _recordingTime;
         private DXGIDeviceManager _devManager;
+        private Stopwatch _watch = new Stopwatch();
+        private long _lastNs;
 
         // duplicating
         private volatile bool _duplicating;
@@ -105,13 +106,10 @@ namespace Duplicator
                 if (_recording == value)
                     return;
 
-                DisposeRecording();
                 _recording = value;
                 if (value)
                 {
-                    if (!IsRecording)
-                        return;
-
+                    DisposeRecording();
                     InitRecording();
                 }
                 else
@@ -119,9 +117,8 @@ namespace Duplicator
                     if (_sinkWriter != null)
                     {
                         _sinkWriter.Finalize();
-                        _sinkWriter.Dispose();
-                        _sinkWriter = null;
                     }
+                    DisposeRecording();
                 }
             }
         }
@@ -165,6 +162,8 @@ namespace Duplicator
                 RecordFilePath = Options.GetNewFilePath();
             }
 
+            RecordFilePath += ".mp4"; // we only support MP4...
+
             string dir = Path.GetDirectoryName(RecordFilePath);
             if (!Directory.Exists(dir))
             {
@@ -177,18 +176,22 @@ namespace Duplicator
             MediaFactory.CreateDXGIDeviceManager(out int token, _devManager);
             _devManager.ResetDevice(_device);
 
-            using (var mt = new MediaType())
+            using (var ma = new MediaAttributes())
             {
-                //mt.Set(SinkWriterAttributeKeys.LowLatency, true);
-                mt.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, 1);
-                mt.Set(SinkWriterAttributeKeys.D3DManager, _devManager);
-                _sinkWriter = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, mt);
+                ma.Set(SinkWriterAttributeKeys.DisableThrottling, Options.DisableThrottling ? 1 : 0);
+                ma.Set(SinkWriterAttributeKeys.LowLatency, Options.LowLatency);
+                ma.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, Options.EnableHardwareTransforms ? 1 : 0);
+                ma.Set(SinkWriterAttributeKeys.D3DManager, _devManager);
+                _sinkWriter = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, ma);
             }
 
             using (var output = new MediaType())
             {
+                int bitrate = 4 * 8 * width * height * Options.RecordingFrameRate;
                 output.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 output.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
+                output.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
+                output.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
                 output.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
                 output.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
                 //output.Set(MediaTypeAttributeKeys.Mpeg2Profile, 100);
@@ -199,31 +202,47 @@ namespace Duplicator
             using (var input = new MediaType())
             {
                 input.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-                input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Argb32);
-                input.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
+                input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Rgb32);
                 input.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
                 input.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
                 _sinkWriter.SetInputMediaType(_videoOutputIndex, input, null);
             }
 
             _sinkWriter.BeginWriting();
+            _watch.Start();
         }
 
         private void WriteFrame()
         {
+            if (!_recording)
+                return;
+
+            var frame = _frameCopy;
+            if (frame == null)
+                return;
+
+            var sw = _sinkWriter;
+            if (sw == null)
+                return;
+
             using (var sample = MediaFactory.CreateSample())
             {
-                MediaFactory.CreateDXGISurfaceBuffer(typeof(Texture2D).GUID, Frame, 0, new RawBool(true), out MediaBuffer buffer);
+                MediaFactory.CreateDXGISurfaceBuffer(typeof(Texture2D).GUID, frame, 0, new RawBool(true), out MediaBuffer buffer);
                 using (buffer)
+                using (var buffer2 = buffer.QueryInterface<Buffer2D>())
                 {
-                    //  100-nanosecond units
-                    sample.SampleTime = _recordingTime;
-                    sample.SampleDuration = 10 * 1000 * 1000 / Options.RecordingFrameRate;
-                    buffer.CurrentLength = buffer.QueryInterface<Buffer2D>().ContiguousLength;
-                    sample.AddBuffer(buffer);
-                    _sinkWriter.WriteSample(_videoOutputIndex, sample);
+                    // in 100-nanosecond units
+                    // 1 ns = 1/1000000000s;
+                    // 100 ns = 100/1000000000s = 1/10000000s
 
-                    _recordingTime += sample.SampleDuration;
+                    var elapsedTicks = _watch.ElapsedTicks;
+                    var elapsedNs = (10000000 * elapsedTicks) / Stopwatch.Frequency;
+                    sample.SampleDuration = elapsedNs - _lastNs;
+                    sample.SampleTime = elapsedNs;
+                    _lastNs = elapsedNs;
+                    buffer.CurrentLength = buffer2.ContiguousLength;
+                    sample.AddBuffer(buffer);
+                    sw.WriteSample(_videoOutputIndex, sample);
                 }
             }
         }
@@ -243,7 +262,8 @@ namespace Duplicator
                     if (adapter == null)
                         return;
 
-                    var flags = DeviceCreationFlags.None;
+                    var flags = DeviceCreationFlags.BgraSupport;
+                    flags |= DeviceCreationFlags.VideoSupport;
 #if DEBUG
                     flags |= DeviceCreationFlags.Debug;
 #endif
@@ -333,12 +353,14 @@ namespace Duplicator
                         FrameAcquired?.Invoke(this, e);
                         if (e.Cancel)
                         {
-                            _duplicating = false;
+                            IsDuplicating = false;
                             return;
                         }
+
+                        WriteFrame();
                     }
                 }
-                catch (Exception ex)
+                catch (SharpDXException ex)
                 {
                     Trace("An error occured: " + ex);
                     // continue
@@ -488,6 +510,8 @@ namespace Duplicator
         {
             Interlocked.Exchange(ref _sinkWriter, null)?.Dispose();
             Interlocked.Exchange(ref _devManager, null)?.Dispose();
+            _watch.Stop();
+            _lastNs = 0;
         }
 
         private void DisposeDuplication()

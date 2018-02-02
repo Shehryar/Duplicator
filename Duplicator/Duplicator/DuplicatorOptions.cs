@@ -14,7 +14,7 @@ namespace Duplicator
         public const string RecordingCategory = "Recording";
         public const string InputCategory = "Input";
         public const string DiagnosticsCategory = "Diagnostics";
-        private const string DefaultFileFormat = "Capture_{0:yyyy_MM_dd_hh_mm_ss}.mp4";
+        private const string DefaultFileFormat = "Capture_{0:yyyy_MM_dd_HH_mm_ss}";
 
         public DuplicatorOptions()
         {
@@ -36,6 +36,7 @@ namespace Duplicator
             RecordingFrameRate = 60;
             OutputFileFormat = DefaultFileFormat;
             OutputDirectoryPath = GetDefaultOutputDirectoryPath();
+            EnableHardwareTransforms = true;
         }
 
         [DisplayName("File Format")]
@@ -55,9 +56,24 @@ namespace Duplicator
             get => DictionaryObjectGetPropertyValue<int>();
             set
             {
-                DictionaryObjectSetPropertyValue(Math.Max(0, value));
+                DictionaryObjectSetPropertyValue(Math.Max(24, value));
             }
         }
+
+        [DisplayName("Enable Hardware Encoding")]
+        [Category(RecordingCategory)]
+        [DefaultValue(true)]
+        public virtual bool EnableHardwareTransforms { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Disable Throttling")]
+        [Category(RecordingCategory)]
+        [DefaultValue(false)]
+        public virtual bool DisableThrottling { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Low Latency")]
+        [Category(RecordingCategory)]
+        [DefaultValue(false)]
+        public virtual bool LowLatency { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Video Adapter")]
         [Category(InputCategory)]
