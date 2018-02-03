@@ -1,0 +1,19 @@
+<providers>
+  <mfdetours level="error"> 
+    <keyword ID="0x0000000000000000" />
+  </mfdetours>
+  
+  <!-- Duplicator id -->
+  <provider level="5" ID="964D4572-ADB9-4F3A-8170-FCBECEC27465">
+    <keyword ID="0xFFFFFFFFFFFFFFFF" />
+  </provider>
+
+  <provider level="16" ID="Microsoft-Windows-MediaFoundation-MFReadWrite">
+    <keyword ID="0xFFFFFFFFFFFFFFFF" />
+  </provider>
+
+  <provider level="error" ID="Microsoft-Windows-MediaFoundation-PlayAPI">
+    <keyword ID="0x0000000000000000" />
+  </provider>
+
+</providers>

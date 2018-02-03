@@ -63,7 +63,18 @@ namespace WinDuplicator
                     break;
 
                 case nameof(_duplicator.IsRecording):
-                    BeginInvoke((Action)(() => checkBoxRecord.Checked = _duplicator.IsRecording));
+                    BeginInvoke((Action)(() =>
+                    {
+                        checkBoxRecord.Checked = _duplicator.IsRecording;
+                        if (_duplicator.IsRecording && !string.IsNullOrEmpty(_duplicator.RecordFilePath))
+                        {
+                            Text = "Duplicator - Recording " + Path.GetFileName(_duplicator.RecordFilePath);
+                        }
+                        else
+                        {
+                            Text = "Duplicator";
+                        }
+                    }));
                     break;
             }
         }
@@ -92,10 +103,6 @@ namespace WinDuplicator
         private void checkBoxRecord_CheckedChanged(object sender, EventArgs e)
         {
             _duplicator.IsRecording = checkBoxRecord.Checked;
-            if (!string.IsNullOrEmpty(_duplicator.RecordFilePath))
-            {
-                Text = "Duplicator - Recording " + Path.GetFileName(_duplicator.RecordFilePath);
-            }
         }
     }
 }

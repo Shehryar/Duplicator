@@ -20,14 +20,16 @@ namespace Duplicator
 {
     public class Duplicator : INotifyPropertyChanged, IDisposable
     {
-        // use that guid in TraceSpy's ETW Trace Provider (https://github.com/smourier/TraceSpy)
-        private static EventProvider _provider = new EventProvider(new Guid("964d4572-adb9-4f3a-8170-fcbecec27465"));
+        // use that guid in TraceSpy's ETW Trace Provider (https://github.com/smourier/TraceSpy) 
+        // or use is with MFTrace (see config.xml and t.bat in the project)
+        private static EventProvider _provider = new EventProvider(new Guid("964D4572-ADB9-4F3A-8170-FCBECEC27465"));
 
         // recording
         private bool _recordingEnabled;
         private Lazy<SinkWriter> _sinkWriter;
         private Lazy<Texture2D> _frameCopy2;
         private int _videoOutputIndex;
+        private int _audioOutputIndex;
         private Lazy<DXGIDeviceManager> _devManager;
         private Stopwatch _watch = new Stopwatch();
         private long _lastNs;
@@ -94,7 +96,7 @@ namespace Duplicator
         public Size2 DesktopSize => _desktopSize.Value;
         public Size2 RenderSize { get; private set; }
 
-        public bool IsBuiltinEncoder { get; private set; }
+        public bool IsUsingBuiltinEncoder { get; private set; }
         public IntPtr Hdc { get; set; }
         public string RecordFilePath { get; set; }
         public Size2 Size
@@ -278,7 +280,11 @@ namespace Duplicator
             while (true);
         }
 
-        private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        private void OnPropertyChanged(string name)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+            Trace("Name " + name);
+        }
 
         private void ClearFrame()
         {
@@ -407,7 +413,9 @@ namespace Duplicator
 
             if (_samplesCount > 0)
             {
+                Trace("SinkWriter Finalize samples: " + _samplesCount);
                 _sinkWriter.Value.Finalize();
+                _samplesCount = 0;
             }
 
             _sinkWriter = Reset(_sinkWriter, CreateSinkWriter);
@@ -415,7 +423,7 @@ namespace Duplicator
             _watch.Stop();
             _lastNs = 0;
             _videoOutputIndex = 0;
-            _samplesCount = 0;
+            _audioOutputIndex = 0;
             OnPropertyChanged(nameof(IsRecording));
         }
 
@@ -564,10 +572,11 @@ namespace Duplicator
                 ma.Set(SinkWriterAttributeKeys.D3DManager, _devManager.Value);
                 ma.Set(SinkWriterAttributeKeys.DisableThrottling, Options.DisableThrottling ? 1 : 0);
                 ma.Set(SinkWriterAttributeKeys.LowLatency, Options.LowLatency);
+                Trace("CreateSinkWriterFromURL pazth: " + RecordFilePath);
                 writer = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, ma);
             }
 
-            using (var output = new MediaType())
+            using (var outputStream = new MediaType())
             {
                 // avg bitrate is mandatory for builtin encoder, not for some others like Intel Media SDK
                 // in fact, what will that be used for? anyway, here is a standard formula from here
@@ -581,27 +590,56 @@ namespace Duplicator
                 if (bitrate <= 0)
                     throw new InvalidOperationException();
 
-                output.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
-                output.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-                output.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
-                output.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
-                output.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
-                output.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
-                writer.AddStream(output, out _videoOutputIndex);
+                outputStream.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
+                outputStream.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                outputStream.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
+                outputStream.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
+                outputStream.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
+                outputStream.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
+                writer.AddStream(outputStream, out _videoOutputIndex);
+                Trace("Added Video Stream index: " + _videoOutputIndex);
             }
 
-            using (var input = new MediaType())
+            using (var inputType = new MediaType())
             {
-                input.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 //input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Argb32);
-                input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Rgb32);
-                input.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
-                input.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
-                writer.SetInputMediaType(_videoOutputIndex, input, null);
+                inputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Rgb32);
+                inputType.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
+                inputType.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
+                Trace("Add Video Input Media Type");
+                writer.SetInputMediaType(_videoOutputIndex, inputType, null);
             }
 
-            IsBuiltinEncoder = H264Encoder.IsBuiltinEncoder(writer, _videoOutputIndex);
-            OnPropertyChanged(nameof(IsBuiltinEncoder));
+            if (Options.EnableSoundRecording)
+            {
+                using (var outputStream = new MediaType())
+                {
+                    outputStream.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Audio);
+                    outputStream.Set(MediaTypeAttributeKeys.Subtype, AudioFormatGuids.Aac);
+                    outputStream.Set(MediaTypeAttributeKeys.AudioNumChannels, 2);
+                    outputStream.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, 44100);
+                    outputStream.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16);
+                    writer.AddStream(outputStream, out _audioOutputIndex);
+                    Trace("Added Audio Stream index: " + _audioOutputIndex);
+                }
+
+                using (var inputType = new MediaType())
+                {
+                    inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Audio);
+                    inputType.Set(MediaTypeAttributeKeys.Subtype, AudioFormatGuids.Pcm);
+                    inputType.Set(MediaTypeAttributeKeys.AudioNumChannels, 2);
+                    inputType.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, 44100);
+                    inputType.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16);
+                    Trace("Add Audio Input Media Type");
+                    writer.SetInputMediaType(_audioOutputIndex, inputType, null);
+                }
+            }
+
+            IsUsingBuiltinEncoder = H264Encoder.IsBuiltinEncoder(writer, _videoOutputIndex);
+            Trace("IsBuiltinEncoder: " + IsUsingBuiltinEncoder);
+            OnPropertyChanged(nameof(IsUsingBuiltinEncoder));
+            Trace("Begin Writing");
             writer.BeginWriting();
             _watch.Start();
             OnPropertyChanged(nameof(IsRecording));
@@ -717,7 +755,7 @@ namespace Duplicator
             return ptr;
         }
 
-        private static void Trace(object value, [CallerMemberName] string methodName = null) => _provider.WriteMessageEvent(methodName + ": " + string.Format("{0}", value), 0, 0);
+        private static void Trace(object value, [CallerMemberName] string methodName = null) => _provider.WriteMessageEvent("#Duplicator::" + methodName + " " + string.Format("{0}", value), 0, 0);
 
 #if DEBUG
         private static void DXGIReportLiveObjects() => DXGIReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_FLAGS.DXGI_DEBUG_RLO_ALL);

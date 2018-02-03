@@ -10,8 +10,9 @@ namespace Duplicator
 {
     public class DuplicatorOptions : DictionaryObject
     {
-        public const string DisplayCategory = "Display Rendering";
+        public const string DisplayCategory = "Duplicated Display";
         public const string RecordingCategory = "Recording";
+        public const string SoundRecordingCategory = "Sound Recording";
         public const string InputCategory = "Input";
         public const string DiagnosticsCategory = "Diagnostics";
         private const string DefaultFileFormat = "Capture_{0:yyyy_MM_dd_HH_mm_ss}";
@@ -37,6 +38,7 @@ namespace Duplicator
             OutputFileFormat = DefaultFileFormat;
             OutputDirectoryPath = GetDefaultOutputDirectoryPath();
             EnableHardwareTransforms = true;
+            EnableSoundRecording = true;
         }
 
         [DisplayName("File Format")]
@@ -57,6 +59,11 @@ namespace Duplicator
         [Category(RecordingCategory)]
         [DefaultValue(true)]
         public virtual bool EnableHardwareTransforms { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Enable")]
+        [Category(SoundRecordingCategory)]
+        [DefaultValue(true)]
+        public virtual bool EnableSoundRecording { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Disable Throttling")]
         [Category(RecordingCategory)]
