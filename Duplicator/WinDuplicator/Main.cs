@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
@@ -24,6 +25,7 @@ namespace WinDuplicator
             propertyGridMain.SelectedObject = _options;
 
             _duplicator = new Duplicator.Duplicator(_options);
+            _duplicator.PropertyChanged += OnDuplicatorPropertyChanged;
             _duplicator.Size = new SharpDX.Size2(splitContainerMain.Panel1.Width, splitContainerMain.Panel1.Height);
 
             splitContainerMain.Panel1.SizeChanged += (sender, e) =>
@@ -45,6 +47,27 @@ namespace WinDuplicator
             };
         }
 
+        private void OnDuplicatorPropertyChanged(object sender, PropertyChangedEventArgs e)
+        {
+            // update chekboxes accordingly with duplicator state
+            // note: these events arrive on another thread
+            switch (e.PropertyName)
+            {
+                case nameof(_duplicator.IsDuplicating):
+                    BeginInvoke((Action)(() =>
+                    {
+                        bool dup = _duplicator.IsDuplicating;
+                        checkBoxDuplicate.Checked = dup;
+                        checkBoxRecord.Enabled = dup;
+                    }));
+                    break;
+
+                case nameof(_duplicator.IsRecording):
+                    BeginInvoke((Action)(() => checkBoxRecord.Checked = _duplicator.IsRecording));
+                    break;
+            }
+        }
+
         protected override void OnClosed(EventArgs e)
         {
             _duplicator?.Dispose();
@@ -58,11 +81,6 @@ namespace WinDuplicator
         private void checkBoxDuplicate_CheckedChanged(object sender, EventArgs e)
         {
             _duplicator.IsDuplicating = checkBoxDuplicate.Checked;
-            checkBoxRecord.Enabled = _duplicator.IsDuplicating;
-            if (!_duplicator.IsDuplicating)
-            {
-                checkBoxRecord.Checked = false;
-            }
         }
 
         private void buttonAbout_Click(object sender, EventArgs e)

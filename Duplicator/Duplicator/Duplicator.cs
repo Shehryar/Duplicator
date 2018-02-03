@@ -18,7 +18,7 @@ using SharpDX.Multimedia;
 
 namespace Duplicator
 {
-    public class Duplicator : IDisposable
+    public class Duplicator : INotifyPropertyChanged, IDisposable
     {
         // use that guid in TraceSpy's ETW Trace Provider (https://github.com/smourier/TraceSpy)
         private static EventProvider _provider = new EventProvider(new Guid("964d4572-adb9-4f3a-8170-fcbecec27465"));
@@ -56,6 +56,8 @@ namespace Duplicator
 #if DEBUG
         private Lazy<DeviceDebug> _deviceDebug;
 #endif
+
+        public event PropertyChangedEventHandler PropertyChanged;
 
         public Duplicator(DuplicatorOptions options)
         {
@@ -228,9 +230,13 @@ namespace Duplicator
 
         private void WorkThreadCallback()
         {
+            // force od creation here so we can notify we're duplicating
+            var od = _outputDuplication.Value;
+            OnPropertyChanged(nameof(IsDuplicating));
             do
             {
-                if (_duplicationEnabled)
+
+                if (_duplicationEnabled && od != null)
                 {
                     if (TryGetFrame())
                     {
@@ -251,6 +257,7 @@ namespace Duplicator
                 }
                 else
                 {
+                    ClearFrame();
                     DisposeRecording();
                     DisposeDuplication();
                     return;
@@ -259,7 +266,20 @@ namespace Duplicator
             while (true);
         }
 
-        public void RenderFrame()
+        private void OnPropertyChanged(string name)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+
+        private void ClearFrame()
+        {
+            _renderTarget.Value.BindDeviceContext(Hdc, new RawRectangle(0, 0, Size.Width, Size.Height));
+            _renderTarget.Value.BeginDraw();
+            _renderTarget.Value.Clear(new RawColor4(1, 1, 1, 1));
+            _renderTarget.Value.EndDraw();
+        }
+
+        private void RenderFrame()
         {
             if (Hdc == IntPtr.Zero || RenderSize.Width == 0 || RenderSize.Height == 0)
                 return;
@@ -382,6 +402,7 @@ namespace Duplicator
             _watch.Stop();
             _lastNs = 0;
             _videoOutputIndex = 0;
+            OnPropertyChanged(nameof(IsRecording));
         }
 
         private void DisposeDuplication()
@@ -401,6 +422,7 @@ namespace Duplicator
             _deviceDebug = Reset(_deviceDebug, CreateDeviceDebug);
 #endif
             _device = Reset(_device, CreateDevice);
+            OnPropertyChanged(nameof(IsDuplicating));
         }
 
         private void OnOptionsChanged(object sender, PropertyChangedEventArgs e)
@@ -505,7 +527,8 @@ namespace Duplicator
 
         private OutputDuplication CreateOutputDuplication()
         {
-            return _output.Value?.DuplicateOutput(_device.Value);
+            var od = _output.Value?.DuplicateOutput(_device.Value);
+            return od;
         }
 
         private DXGIDeviceManager CreateDeviceManager()
@@ -582,6 +605,7 @@ namespace Duplicator
             bool bi = H264Encoder.IsBuiltinEncoder(writer, _videoOutputIndex);
             writer.BeginWriting();
             _watch.Start();
+            OnPropertyChanged(nameof(IsRecording));
             return writer;
         }
 
