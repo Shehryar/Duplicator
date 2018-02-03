@@ -1,6 +1,6 @@
 ﻿namespace WinDuplicator
 {
-    partial class ChooseAdapter
+    partial class ChooseAudioDevice
     {
         /// <summary>
         /// Required designer variable.
@@ -33,10 +33,7 @@
             this.buttonCancel = new System.Windows.Forms.Button();
             this.buttonOk = new System.Windows.Forms.Button();
             this.listViewMain = new System.Windows.Forms.ListView();
-            this.columnDescription = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
-            this.columnFlags = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
-            this.columnRevision = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
-            this.columnVRAM = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
+            this.columnName = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.tableLayoutPanelMain.SuspendLayout();
             this.panelCommands.SuspendLayout();
             this.SuspendLayout();
@@ -91,10 +88,7 @@
             // listViewMain
             // 
             this.listViewMain.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
-            this.columnDescription,
-            this.columnFlags,
-            this.columnRevision,
-            this.columnVRAM});
+            this.columnName});
             this.listViewMain.Dock = System.Windows.Forms.DockStyle.Fill;
             this.listViewMain.FullRowSelect = true;
             this.listViewMain.HeaderStyle = System.Windows.Forms.ColumnHeaderStyle.Nonclickable;
@@ -105,27 +99,13 @@
             this.listViewMain.TabIndex = 0;
             this.listViewMain.UseCompatibleStateImageBehavior = false;
             this.listViewMain.View = System.Windows.Forms.View.Details;
-            this.listViewMain.SelectedIndexChanged += new System.EventHandler(this.listViewMain_SelectedIndexChanged);
             // 
-            // columnDescription
+            // columnName
             // 
-            this.columnDescription.Text = "Description";
-            this.columnDescription.Width = 211;
+            this.columnName.Text = "Name";
+            this.columnName.Width = 211;
             // 
-            // columnFlags
-            // 
-            this.columnFlags.Text = "Flags";
-            // 
-            // columnRevision
-            // 
-            this.columnRevision.Text = "Revision";
-            this.columnRevision.Width = 120;
-            // 
-            // columnVRAM
-            // 
-            this.columnVRAM.Text = "VRAM";
-            // 
-            // ChooseAdapter
+            // ChooseAudioDevice
             // 
             this.AcceptButton = this.buttonOk;
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
@@ -135,9 +115,9 @@
             this.Controls.Add(this.tableLayoutPanelMain);
             this.MaximizeBox = false;
             this.MinimizeBox = false;
-            this.Name = "ChooseAdapter";
+            this.Name = "ChooseAudioDevice";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
-            this.Text = "Choose Adapter";
+            this.Text = "Choose Audio Device";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.ChooseAdapter_FormClosing);
             this.tableLayoutPanelMain.ResumeLayout(false);
             this.panelCommands.ResumeLayout(false);
@@ -152,9 +132,6 @@
         private System.Windows.Forms.Button buttonCancel;
         private System.Windows.Forms.Button buttonOk;
         private System.Windows.Forms.ListView listViewMain;
-        private System.Windows.Forms.ColumnHeader columnDescription;
-        private System.Windows.Forms.ColumnHeader columnFlags;
-        private System.Windows.Forms.ColumnHeader columnRevision;
-        private System.Windows.Forms.ColumnHeader columnVRAM;
+        private System.Windows.Forms.ColumnHeader columnName;
     }
 }

@@ -7,6 +7,8 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
+using NAudio.CoreAudioApi;
+using NAudio.Wave;
 using SharpDX;
 using SharpDX.Direct2D1;
 using SharpDX.Direct3D11;
@@ -33,6 +35,10 @@ namespace Duplicator
         private Lazy<DXGIDeviceManager> _devManager;
         private Stopwatch _watch = new Stopwatch();
         private long _lastNs;
+        private WasapiLoopbackCapture _soundCapture;
+        private int _audioSamplesCount;
+        private int _audioGapsCount;
+        private bool _discontinuity;
 
         // duplicating
         private bool _duplicationEnabled;
@@ -48,7 +54,7 @@ namespace Duplicator
         private System.Threading.Timer _frameRateTimer;
         private Thread _duplicationThread;
         private int _accumulatedFramesCount;
-        private int _samplesCount;
+        private int _videoSamplesCount;
         private int _currentFrameNumber;
         private int _currentFrameRate;
         private RawPoint _pointerPosition;
@@ -90,6 +96,12 @@ namespace Duplicator
                 _currentFrameRate = _currentFrameNumber;
                 _currentFrameNumber = 0;
             }, null, 0, 1000);
+
+            var ad = Options.GetAudioDevice() ?? WasapiLoopbackCapture.GetDefaultLoopbackCaptureDevice();
+            _soundCapture = new WasapiLoopbackCapture(ad);
+            _soundCapture.ShareMode = AudioClientShareMode.Shared;
+            _soundCapture.DataAvailable += SoundCaptureDataAvailable;
+            _soundCapture.RecordingStopped += SoundCaptureRecordingStopped;
         }
 
         public DuplicatorOptions Options { get; }
@@ -157,7 +169,7 @@ namespace Duplicator
             }
         }
 
-        private void WriteFrame()
+        private void WriteVideoSample()
         {
             var frame = _frame;
             if (frame == null)
@@ -186,9 +198,119 @@ namespace Duplicator
                     buffer.CurrentLength = buffer2.ContiguousLength;
                     sample.AddBuffer(buffer);
                     _sinkWriter.Value.WriteSample(_videoOutputIndex, sample);
-                    _samplesCount++;
+                    _videoSamplesCount++;
                 }
             }
+        }
+
+        private void SoundCaptureRecordingStopped(object sender, StoppedEventArgs e)
+        {
+            Trace("error: " + e.Exception);
+        }
+
+        private void SoundCaptureDataAvailable(object sender, WaveInEventArgs e)
+        {
+            //Trace("buffer: " + e.Buffer.Length + " recorded: " + e.BytesRecorded);
+            WriteAudioSample(e.Buffer, e.BytesRecorded);
+        }
+
+        private void WriteAudioSample(byte[] bytes, int recorded)
+        {
+            var elapsedTicks = _watch.ElapsedTicks;
+            var elapsedNs = (10000000 * elapsedTicks) / Stopwatch.Frequency;
+
+            if (recorded == 0)
+            {
+                try
+                {
+                    _sinkWriter.Value.SendStreamTick(_audioSamplesCount, elapsedNs);
+                }
+                catch (Exception e)
+                {
+                    // we may be closing down
+                    Trace("SendStreamTick failed: " + e.Message);
+                }
+                _audioGapsCount++;
+                _discontinuity = true;
+                return;
+            }
+
+            using (var buffer = MediaFactory.CreateMemoryBuffer(recorded))
+            {
+                var ptr = buffer.Lock(out int max, out int current);
+                try
+                {
+                    int offset = 0;
+                    var provider = new WaveFloatTo16Provider(new RawSourceWaveStream(bytes, 0, recorded, _soundCapture.WaveFormat));
+
+                    // this buffer size should be ok (since 32 PCM/2 = 16 PCM)
+                    // but we still do a loop, never know...
+                    var pcm = new byte[recorded / 2];
+                    using (var resampler = new MediaFoundationResampler(provider, new NAudio.Wave.WaveFormat(44100, 16, 2)))
+                    {
+                        do
+                        {
+                            int read = resampler.Read(pcm, 0, pcm.Length);
+                            //Trace("resampled read: " + read);
+                            if (read == 0)
+                                break;
+
+                            Marshal.Copy(pcm, 0, ptr + offset, read);
+                            offset += read;
+                        }
+                        while (true);
+                    }
+                    buffer.CurrentLength = offset;
+                }
+                finally
+                {
+                    buffer.Unlock();
+                }
+
+                using (var sample = MediaFactory.CreateSample())
+                {
+                    if (_discontinuity)
+                    {
+                        _discontinuity = false;
+                        sample.Set(SampleAttributeKeys.Discontinuity, true);
+                    }
+
+                    sample.SampleDuration = elapsedNs - _lastNs;
+                    sample.SampleTime = elapsedNs;
+                    _lastNs = elapsedNs;
+                    sample.AddBuffer(buffer);
+                    _sinkWriter.Value.WriteSample(_audioOutputIndex, sample);
+                    _audioSamplesCount++;
+                }
+            }
+        }
+
+        private class IntPtrStream : Stream
+        {
+            private IntPtr _ptr;
+
+            public IntPtrStream(IntPtr ptr, long length)
+            {
+                _ptr = ptr;
+                Length = length;
+                Position = 0;
+            }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => throw new NotImplementedException();
+            public override bool CanWrite => true;
+
+            public override void Write(byte[] buffer, int offset, int count)
+            {
+                Marshal.Copy(buffer, offset, _ptr + (int)Position, count);
+            }
+
+            public override long Length { get; }
+            public override long Position { get; set; }
+            public override void Flush() { }
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotImplementedException();
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotImplementedException();
+            public override void SetLength(long value) => throw new NotImplementedException();
         }
 
         private bool TryGetFrame()
@@ -261,7 +383,7 @@ namespace Duplicator
 
                         if (_recordingEnabled)
                         {
-                            WriteFrame();
+                            WriteVideoSample();
                         }
                         else
                         {
@@ -411,13 +533,20 @@ namespace Duplicator
             if (!_sinkWriter.IsValueCreated)
                 return;
 
-            if (_samplesCount > 0)
+            _soundCapture.StopRecording();
+            while (_soundCapture.CaptureState != CaptureState.Stopped)
             {
-                Trace("SinkWriter Finalize samples: " + _samplesCount);
-                _sinkWriter.Value.Finalize();
-                _samplesCount = 0;
+                Trace("Waiting for sound capture stop");
+                Thread.Sleep(10);
             }
 
+            if (_videoSamplesCount > 0)
+            {
+                Trace("SinkWriter Finalize video samples: " + _videoSamplesCount + " audio samples: " + _audioSamplesCount + " audio gaps: " + _audioGapsCount);
+                _sinkWriter.Value.Finalize();
+                _videoSamplesCount = 0;
+            }
+            _audioSamplesCount = 0;
             _sinkWriter = Reset(_sinkWriter, CreateSinkWriter);
             _devManager = Reset(_devManager, CreateDeviceManager);
             _watch.Stop();
@@ -642,6 +771,7 @@ namespace Duplicator
             Trace("Begin Writing");
             writer.BeginWriting();
             _watch.Start();
+            _soundCapture.StartRecording();
             OnPropertyChanged(nameof(IsRecording));
             return writer;
         }

@@ -18,6 +18,9 @@ namespace WinDuplicator
         [Editor(typeof(AdapterEditor), typeof(UITypeEditor))]
         public override string Adapter { get => base.Adapter; set => base.Adapter = value; }
 
+        [Editor(typeof(AudioDeviceEditor), typeof(UITypeEditor))]
+        public override string AudioDevice { get => base.AudioDevice; set => base.AudioDevice = value; }
+
         [TypeConverter(typeof(FrameRateConverter))]
         public override float RecordingFrameRate { get => base.RecordingFrameRate; set => base.RecordingFrameRate = value; }
 
@@ -82,6 +85,24 @@ namespace WinDuplicator
                 var form = new ChooseAdapter(value as string);
                 if (editorService.ShowDialog(form) == DialogResult.OK)
                     return form.Adapter.Description1.Description;
+
+                return base.EditValue(context, provider, value);
+            }
+        }
+
+        private class AudioDeviceEditor : UITypeEditor
+        {
+            public override UITypeEditorEditStyle GetEditStyle(ITypeDescriptorContext context) => UITypeEditorEditStyle.Modal;
+
+            public override object EditValue(ITypeDescriptorContext context, IServiceProvider provider, object value)
+            {
+                var editorService = (IWindowsFormsEditorService)provider.GetService(typeof(IWindowsFormsEditorService));
+                if (editorService == null)
+                    return base.EditValue(context, provider, value);
+
+                var form = new ChooseAudioDevice(value as string);
+                if (editorService.ShowDialog(form) == DialogResult.OK)
+                    return form.Device.FriendlyName;
 
                 return base.EditValue(context, provider, value);
             }

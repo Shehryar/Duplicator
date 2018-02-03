@@ -52,6 +52,12 @@
     <Compile Include="About.Designer.cs">
       <DependentUpon>About.cs</DependentUpon>
     </Compile>
+    <Compile Include="ChooseAudioDevice.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="ChooseAudioDevice.Designer.cs">
+      <DependentUpon>ChooseAudioDevice.cs</DependentUpon>
+    </Compile>
     <Compile Include="ChooseOutput.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -83,6 +89,9 @@
   <ItemGroup>
     <EmbeddedResource Include="About.resx">
       <DependentUpon>About.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="ChooseAudioDevice.resx">
+      <DependentUpon>ChooseAudioDevice.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="ChooseOutput.resx">
       <DependentUpon>ChooseOutput.cs</DependentUpon>

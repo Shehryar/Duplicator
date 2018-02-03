@@ -45,6 +45,9 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="NAudio">
+      <Version>1.8.4</Version>
+    </PackageReference>
     <PackageReference Include="SharpDX">
       <Version>4.0.1</Version>
     </PackageReference>

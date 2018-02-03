@@ -4,6 +4,8 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using NAudio.CoreAudioApi;
+using NAudio.Wave;
 using SharpDX.DXGI;
 
 namespace Duplicator
@@ -39,6 +41,7 @@ namespace Duplicator
             OutputDirectoryPath = GetDefaultOutputDirectoryPath();
             EnableHardwareTransforms = true;
             EnableSoundRecording = true;
+            AudioDevice = WasapiLoopbackCapture.GetDefaultLoopbackCaptureDevice()?.FriendlyName;
         }
 
         [DisplayName("File Format")]
@@ -64,6 +67,10 @@ namespace Duplicator
         [Category(SoundRecordingCategory)]
         [DefaultValue(true)]
         public virtual bool EnableSoundRecording { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Audio Device")]
+        [Category(SoundRecordingCategory)]
+        public virtual string AudioDevice { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Disable Throttling")]
         [Category(RecordingCategory)]
@@ -119,6 +126,14 @@ namespace Duplicator
             {
                 // we don't want infinite
                 DictionaryObjectSetPropertyValue(Math.Max(0, value));
+            }
+        }
+
+        public MMDevice GetAudioDevice()
+        {
+            using (var enumerator = new MMDeviceEnumerator())
+            {
+                return enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active).FirstOrDefault(d => d.FriendlyName == AudioDevice);
             }
         }
 

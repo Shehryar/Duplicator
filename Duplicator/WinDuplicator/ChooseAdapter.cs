@@ -37,8 +37,21 @@ namespace WinDuplicator
         {
             if ((e.CloseReason == CloseReason.UserClosing || e.CloseReason == CloseReason.None) && DialogResult == DialogResult.OK)
             {
-                Adapter = (Adapter1)listViewMain.SelectedItems[0].Tag;
+                if (listViewMain.SelectedItems.Count > 0)
+                {
+                    Adapter = (Adapter1)listViewMain.SelectedItems[0].Tag;
+                }
             }
+        }
+
+        private void UpdateControls()
+        {
+            buttonOk.Enabled = listViewMain.SelectedItems.Count > 0;
+        }
+
+        private void listViewMain_SelectedIndexChanged(object sender, System.EventArgs e)
+        {
+            UpdateControls();
         }
     }
 }
