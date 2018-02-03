@@ -1,5 +1,4 @@
 ﻿using System;
-using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
@@ -25,7 +24,6 @@ namespace WinDuplicator
             propertyGridMain.SelectedObject = _options;
 
             _duplicator = new Duplicator.Duplicator(_options);
-            _duplicator.FrameAcquired += OnFrameAcquired;
             _duplicator.Size = new SharpDX.Size2(splitContainerMain.Panel1.Width, splitContainerMain.Panel1.Height);
 
             splitContainerMain.Panel1.SizeChanged += (sender, e) =>
@@ -45,11 +43,6 @@ namespace WinDuplicator
                 _graphics.ReleaseHdc();
                 _graphics.Dispose();
             };
-        }
-
-        private void OnFrameAcquired(object sender, CancelEventArgs e)
-        {
-            _duplicator.RenderFrame();
         }
 
         protected override void OnClosed(EventArgs e)

@@ -105,6 +105,7 @@
             this.listViewMain.TabIndex = 0;
             this.listViewMain.UseCompatibleStateImageBehavior = false;
             this.listViewMain.View = System.Windows.Forms.View.Details;
+            this.listViewMain.SelectedIndexChanged += new System.EventHandler(this.listViewMain_SelectedIndexChanged);
             // 
             // columnName
             // 
@@ -136,7 +137,7 @@
             this.MinimizeBox = false;
             this.Name = "ChooseOutput";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
-            this.Text = "Choose Adapter";
+            this.Text = "Choose Output";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.ChooseOutput_FormClosing);
             this.tableLayoutPanelMain.ResumeLayout(false);
             this.panelCommands.ResumeLayout(false);

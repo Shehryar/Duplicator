@@ -30,6 +30,8 @@ namespace WinDuplicator
             }
 
             listViewMain.AutoResizeColumns(ColumnHeaderAutoResizeStyle.HeaderSize);
+            UpdateControls();
+            Text = "Choose Monitor for " + adapter.Description.Description;
         }
 
         public string DeviceName { get; private set; }
@@ -38,8 +40,21 @@ namespace WinDuplicator
         {
             if ((e.CloseReason == CloseReason.UserClosing || e.CloseReason == CloseReason.None) && DialogResult == DialogResult.OK)
             {
-                DeviceName = (string)listViewMain.SelectedItems[0].Tag;
+                if (listViewMain.SelectedItems.Count > 0)
+                {
+                    DeviceName = (string)listViewMain.SelectedItems[0].Tag;
+                }
             }
+        }
+
+        private void UpdateControls()
+        {
+            buttonOk.Enabled = listViewMain.SelectedItems.Count > 0;
+        }
+
+        private void listViewMain_SelectedIndexChanged(object sender, System.EventArgs e)
+        {
+            UpdateControls();
         }
     }
 }

@@ -24,29 +24,29 @@ namespace Duplicator
         private static EventProvider _provider = new EventProvider(new Guid("964d4572-adb9-4f3a-8170-fcbecec27465"));
 
         // recording
-        private volatile bool _recording;
-        private SinkWriter _sinkWriter;
-        private static bool _mfStarted;
+        private bool _recordingEnabled;
+        private Lazy<SinkWriter> _sinkWriter;
         private int _videoOutputIndex;
-        private DXGIDeviceManager _devManager;
+        private Lazy<DXGIDeviceManager> _devManager;
         private Stopwatch _watch = new Stopwatch();
         private long _lastNs;
 
         // duplicating
-        private volatile bool _duplicating;
+        private bool _duplicationEnabled;
+        private Lazy<SharpDX.Direct3D11.Device> _device;
+        private Lazy<OutputDuplication> _outputDuplication;
+        private Lazy<Output1> _output;
+        private Lazy<TextFormat> _diagsTextFormat;
+        private Lazy<DeviceContextRenderTarget> _renderTarget;
+        private Lazy<Brush> _diagsBrush;
+        private Lazy<Texture2D> _frameCopy;
+        private Lazy<Size2> _desktopSize;
+        private Bitmap _pointerBitmap;
         private System.Threading.Timer _frameRateTimer;
         private Thread _duplicationThread;
-        private TextFormat _diagsTextFormat;
-        private Brush _diagsBrush;
         private int _accumulatedFramesCount;
         private int _currentFrameNumber;
         private int _currentFrameRate;
-        private DeviceContextRenderTarget _renderTarget;
-        private Texture2D _copy;
-        private SharpDX.Direct3D11.Device _device;
-        private Output1 _output;
-        private OutputDuplication _outputDuplication;
-        private Bitmap _pointerBitmap;
         private RawPoint _pointerPosition;
         private RawPoint _pointerHotspot;
         private bool _pointerVisible;
@@ -54,10 +54,8 @@ namespace Duplicator
         private Size2 _size;
         private SharpDX.DXGI.Resource _frame;
 #if DEBUG
-        private DeviceDebug _deviceDebug;
+        private Lazy<DeviceDebug> _deviceDebug;
 #endif
-
-        public event EventHandler<CancelEventArgs> FrameAcquired;
 
         public Duplicator(DuplicatorOptions options)
         {
@@ -66,13 +64,32 @@ namespace Duplicator
 
             Options = options;
             Options.PropertyChanged += OnOptionsChanged;
+
+            _devManager = new Lazy<DXGIDeviceManager>(CreateDeviceManager);
+            _sinkWriter = new Lazy<SinkWriter>(CreateSinkWriter);
+            _device = new Lazy<SharpDX.Direct3D11.Device>(CreateDevice);
+#if DEBUG
+            _deviceDebug = new Lazy<DeviceDebug>(CreateDeviceDebug);
+#endif
+            _desktopSize = new Lazy<Size2>(CreateDesktopSize);
+            _output = new Lazy<Output1>(CreateOutput);
+            _outputDuplication = new Lazy<OutputDuplication>(CreateOutputDuplication);
+            _renderTarget = new Lazy<DeviceContextRenderTarget>(CreateRenderTarget);
+            _frameCopy = new Lazy<Texture2D>(CreateFrameCopy);
+            _diagsTextFormat = new Lazy<TextFormat>(CreateDiagsTextFormat);
+            _diagsBrush = new Lazy<Brush>(CreateDiagsBrush);
+            _frameRateTimer = new System.Threading.Timer((state) =>
+            {
+                _currentFrameRate = _currentFrameNumber;
+                _currentFrameNumber = 0;
+            }, null, 0, 1000);
         }
 
         public DuplicatorOptions Options { get; }
         public SharpDX.DXGI.Resource Frame { get => _frame; set => _frame = value; }
         public IntPtr Hdc { get; set; }
         public string RecordFilePath { get; set; }
-        public Size2 DesktopSize { get; private set; }
+        public Size2 DesktopSize => _desktopSize.Value;
         public Size2 RenderSize { get; private set; }
         public Size2 Size
         {
@@ -98,143 +115,42 @@ namespace Duplicator
             }
         }
 
-        public bool IsRecording
-        {
-            get => _recording;
-            set
-            {
-                if (_recording == value)
-                    return;
-
-                _recording = value;
-                if (value)
-                {
-                    DisposeRecording();
-                    InitRecording();
-                }
-                else
-                {
-                    if (_sinkWriter != null)
-                    {
-                        _sinkWriter.NotifyEndOfSegment(_videoOutputIndex);
-                        _sinkWriter.Finalize();
-                    }
-                    DisposeRecording();
-                }
-            }
-        }
+        public bool IsRecording { get => _sinkWriter.IsValueCreated; set { _recordingEnabled = value; } }
 
         public bool IsDuplicating
         {
-            get => _duplicating;
+            get => _outputDuplication.IsValueCreated;
             set
             {
-                if (_duplicating == value)
+                if (IsDuplicating == value)
                     return;
 
-                DisposeDuplication();
-                _duplicating = value;
+                _duplicationEnabled = value;
                 if (value)
                 {
-                    InitDuplication();
                     Size = Size;
-                    _duplicationThread = new Thread(DuplicateThreadCallback);
-                    _duplicationThread.Name = nameof(Duplicator) + Environment.TickCount;
+                    _duplicationThread = new Thread(WorkThreadCallback);
+                    _duplicationThread.Name = nameof(Duplicator) + DateTime.Now.TimeOfDay;
                     _duplicationThread.IsBackground = true;
                     _duplicationThread.Start();
                 }
                 else
                 {
                     IsRecording = false;
+                    var t = _duplicationThread;
+                    _duplicationThread = null;
+                    if (t != null)
+                    {
+                        var result = t.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
+                    }
                 }
             }
         }
 
-        private void InitRecording()
-        {
-            if (!_mfStarted)
-            {
-                MediaManager.Startup();
-                _mfStarted = true;
-            }
-
-            if (string.IsNullOrEmpty(RecordFilePath))
-            {
-                RecordFilePath = Options.GetNewFilePath();
-            }
-
-            RecordFilePath += ".mp4"; // we only support MP4...
-
-            string dir = Path.GetDirectoryName(RecordFilePath);
-            if (!Directory.Exists(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
-            int width = DesktopSize.Width;
-            int height = DesktopSize.Height;
-            _devManager = new DXGIDeviceManager();
-            MediaFactory.CreateDXGIDeviceManager(out int token, _devManager);
-            _devManager.ResetDevice(_device);
-
-            using (var ma = new MediaAttributes())
-            {
-                // note this doesn't mean you *will* have a hardware transform. Intel Media SDK sometimes is not happy with configuration for HDCP issues.
-                ma.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, Options.EnableHardwareTransforms ? 1 : 0);
-                ma.Set(SinkWriterAttributeKeys.D3DManager, _devManager);
-                ma.Set(SinkWriterAttributeKeys.DisableThrottling, Options.DisableThrottling ? 1 : 0);
-                ma.Set(SinkWriterAttributeKeys.LowLatency, Options.LowLatency);
-                _sinkWriter = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, ma);
-            }
-
-            using (var output = new MediaType())
-            {
-                // avg bitrate is mandatory for builtin encoder, not for some others like Intel Media SDK
-                // in fact, what will that be used for? anyway, here is a standard formula from here
-                // https://stackoverflow.com/questions/5024114/suggested-compression-ratio-with-h-264
-                //
-                // [image width] x [image height] x [framerate] x [motion rank] x 0.07 = [desired bitrate]
-                //
-
-                int motionRank = 1;
-                int bitrate = (int)(width * height * Options.RecordingFrameRate * motionRank);
-                if (bitrate <= 0)
-                    throw new InvalidOperationException();
-
-                output.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
-                output.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-                output.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
-                output.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
-                output.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
-                output.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
-                _sinkWriter.AddStream(output, out _videoOutputIndex);
-            }
-
-            using (var input = new MediaType())
-            {
-                input.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-                input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Argb32);
-                input.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
-                input.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
-                _sinkWriter.SetInputMediaType(_videoOutputIndex, input, null);
-            }
-
-            bool bi = H264Encoder.IsBuiltinEncoder(_sinkWriter, _videoOutputIndex);
-            _sinkWriter.BeginWriting();
-            _watch.Start();
-        }
-
         private void WriteFrame()
         {
-            if (!_recording || !_watch.IsRunning)
-                return;
-
             var frame = _frame;
             if (frame == null)
-                return;
-
-            var sw = _sinkWriter;
-            if (sw == null)
                 return;
 
             using (var sample = MediaFactory.CreateSample())
@@ -254,62 +170,24 @@ namespace Duplicator
                     _lastNs = elapsedNs;
                     buffer.CurrentLength = buffer2.ContiguousLength;
                     sample.AddBuffer(buffer);
-                    sw.WriteSample(_videoOutputIndex, sample);
+                    _sinkWriter.Value.WriteSample(_videoOutputIndex, sample);
                 }
-            }
-        }
-
-        private void InitDuplication()
-        {
-            _frameRateTimer = new System.Threading.Timer((state) =>
-            {
-                _currentFrameRate = _currentFrameNumber;
-                _currentFrameNumber = 0;
-            }, null, 0, 1000);
-
-            using (var fac = new SharpDX.DXGI.Factory1())
-            {
-                using (var adapter = Options.GetAdapter())
-                {
-                    if (adapter == null)
-                        return;
-
-                    var flags = DeviceCreationFlags.BgraSupport;
-                    //flags |= DeviceCreationFlags.VideoSupport;
-#if DEBUG
-                    flags |= DeviceCreationFlags.Debug;
-#endif
-                    _device = new SharpDX.Direct3D11.Device(adapter, flags);
-#if DEBUG
-                    _deviceDebug = _device.QueryInterface<DeviceDebug>();
-#endif
-                    _output = Options.GetOutput();
-                    DesktopSize = _output != null ? new Size2(
-                        _output.Description.DesktopBounds.Right - _output.Description.DesktopBounds.Left,
-                        _output.Description.DesktopBounds.Bottom - _output.Description.DesktopBounds.Top) : new Size2();
-                    _outputDuplication = _output?.DuplicateOutput(_device);
-                }
-            }
-
-            using (var fac = new SharpDX.DirectWrite.Factory1())
-            {
-                _diagsTextFormat = new TextFormat(fac, "Lucida Console", 16);
-                _diagsTextFormat.WordWrapping = WordWrapping.Character;
             }
         }
 
         private bool TryGetFrame()
         {
-            var od = _outputDuplication;
+            var od = _outputDuplication.Value; // can be null if adapter is not connected
+            if (od == null)
+                return false;
+
             var frame = Frame;
             if (frame != null)
             {
                 Frame = null;
                 frame.Dispose();
-                od?.ReleaseFrame();
+                od.ReleaseFrame();
             }
-            if (od == null)
-                return false;
 
             SharpDX.DXGI.Resource resource = null;
             try
@@ -337,7 +215,7 @@ namespace Duplicator
                 // DXGI_ERROR_ACCESS_LOST
                 if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Code)
                 {
-                    InitDuplication();
+                    DisposeDuplication();
                     return false;
                 }
 
@@ -348,34 +226,34 @@ namespace Duplicator
             return true;
         }
 
-        private void DuplicateThreadCallback()
+        private void WorkThreadCallback()
         {
-            var sw = new Stopwatch();
-            sw.Start();
             do
             {
-                if (!_duplicating)
-                    return;
-
-                try
+                if (_duplicationEnabled)
                 {
                     if (TryGetFrame())
                     {
-                        var e = new CancelEventArgs();
-                        FrameAcquired?.Invoke(this, e);
-                        if (e.Cancel)
+                        if (_duplicationEnabled)
                         {
-                            IsDuplicating = false;
-                            return;
+                            RenderFrame();
                         }
 
-                        WriteFrame();
+                        if (_recordingEnabled)
+                        {
+                            WriteFrame();
+                        }
+                        else
+                        {
+                            DisposeRecording();
+                        }
                     }
                 }
-                catch (SharpDXException ex)
+                else
                 {
-                    System.Diagnostics.Trace.WriteLine("An error occured: " + ex);
-                    // continue
+                    DisposeRecording();
+                    DisposeDuplication();
+                    return;
                 }
             }
             while (true);
@@ -390,54 +268,11 @@ namespace Duplicator
             if (frame == null)
                 return;
 
-            var output = _output;
-            if (output == null)
-                return;
-
-            var device = _device;
-            if (device == null)
-                return;
-
-            var dcrt = _renderTarget;
-            var copy = _copy;
-            if (copy == null)
-            {
-                var desc = new Texture2DDescription()
-                {
-                    CpuAccessFlags = CpuAccessFlags.Read,
-                    BindFlags = BindFlags.None,
-                    Format = Format.B8G8R8A8_UNorm,
-                    Width = DesktopSize.Width,
-                    Height = DesktopSize.Height,
-                    OptionFlags = ResourceOptionFlags.None,
-                    MipLevels = 1,
-                    ArraySize = 1,
-                    SampleDescription = { Count = 1, Quality = 0 },
-                    Usage = ResourceUsage.Staging
-                };
-
-                copy = new Texture2D(device, desc);
-                _copy = copy;
-            }
-
-            if (dcrt == null)
-            {
-                using (var fac = new SharpDX.Direct2D1.Factory1())
-                {
-                    var props = new RenderTargetProperties();
-                    props.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Ignore);
-                    dcrt = new DeviceContextRenderTarget(fac, props);
-                    _renderTarget = dcrt;
-
-                    _diagsBrush = new SolidColorBrush(dcrt, new RawColor4(1, 0, 0, 1));
-                }
-            }
-
-            using (var surface = copy.QueryInterface<Surface>())
+            using (var surface = _frameCopy.Value.QueryInterface<Surface>())
             {
                 using (var res = frame.QueryInterface<SharpDX.Direct3D11.Resource>())
                 {
-                    device.ImmediateContext.CopyResource(res, copy);
+                    _device.Value.ImmediateContext.CopyResource(res, _frameCopy.Value);
                 }
 
                 var map = surface.Map(SharpDX.DXGI.MapFlags.Read, out DataStream ds);
@@ -445,15 +280,15 @@ namespace Duplicator
                 {
                     var bprops = new BitmapProperties();
                     bprops.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Ignore);
-                    dcrt.BindDeviceContext(Hdc, new RawRectangle(0, 0, Size.Width, Size.Height));
-                    dcrt.BeginDraw();
-                    dcrt.Clear(new RawColor4(1, 1, 1, 1));
+                    _renderTarget.Value.BindDeviceContext(Hdc, new RawRectangle(0, 0, Size.Width, Size.Height));
+                    _renderTarget.Value.BeginDraw();
+                    _renderTarget.Value.Clear(new RawColor4(1, 1, 1, 1));
 
                     var renderX = (Size.Width - RenderSize.Width) / 2;
                     var renderY = (Size.Height - RenderSize.Height) / 2;
-                    using (var bmp = new Bitmap(dcrt, DesktopSize, ds, map.Pitch, bprops))
+                    using (var bmp = new Bitmap(_renderTarget.Value, DesktopSize, ds, map.Pitch, bprops))
                     {
-                        dcrt.DrawBitmap(bmp, new RawRectangleF(renderX, renderY, renderX + RenderSize.Width, renderY + RenderSize.Height), 1, BitmapInterpolationMode.Linear);
+                        _renderTarget.Value.DrawBitmap(bmp, new RawRectangleF(renderX, renderY, renderX + RenderSize.Width, renderY + RenderSize.Height), 1, BitmapInterpolationMode.Linear);
                     }
 
                     var diags = new List<string>();
@@ -495,33 +330,55 @@ namespace Duplicator
                                     captureY + pb.Size.Height);
                             }
 
-                            dcrt.DrawBitmap(pb, rect, 1, BitmapInterpolationMode.NearestNeighbor);
+                            _renderTarget.Value.DrawBitmap(pb, rect, 1, BitmapInterpolationMode.NearestNeighbor);
                         }
                     }
 
                     if (diags.Count > 0)
                     {
-                        dcrt.DrawText(string.Join(Environment.NewLine, diags), _diagsTextFormat, new RawRectangleF(0, 0, Size.Width, Size.Height), _diagsBrush);
+                        _renderTarget.Value.DrawText(string.Join(Environment.NewLine, diags), _diagsTextFormat.Value, new RawRectangleF(0, 0, Size.Width, Size.Height), _diagsBrush.Value);
                     }
 
-                    dcrt.EndDraw();
+                    _renderTarget.Value.EndDraw();
                 }
             }
         }
 
         public void Dispose()
         {
-            DisposeRecording();
-            DisposeDuplication();
+            IsDuplicating = false;
+            _frameRateTimer = Dispose(_frameRateTimer);
 #if DEBUG
             DXGIReportLiveObjects();
 #endif
         }
 
+        // a multi thread version is:
+        // disposable = Interlocked.Exchange(ref disposable, null)?.Dispose();
+        private static T Dispose<T>(T disposable) where T : IDisposable
+        {
+            disposable?.Dispose();
+            return default(T);
+        }
+
+        private static Lazy<T> Reset<T>(Lazy<T> disposable, Func<T> valueFactory) where T : IDisposable
+        {
+            if (disposable != null && disposable.IsValueCreated)
+            {
+                disposable.Value?.Dispose();
+            }
+            return new Lazy<T>(valueFactory);
+        }
+
         private void DisposeRecording()
         {
-            Interlocked.Exchange(ref _sinkWriter, null)?.Dispose();
-            Interlocked.Exchange(ref _devManager, null)?.Dispose();
+            if (!_sinkWriter.IsValueCreated)
+                return;
+
+            _sinkWriter.Value.Finalize();
+
+            _sinkWriter = Reset(_sinkWriter, CreateSinkWriter);
+            _devManager = Reset(_devManager, CreateDeviceManager);
             _watch.Stop();
             _lastNs = 0;
             _videoOutputIndex = 0;
@@ -531,21 +388,19 @@ namespace Duplicator
         {
             _currentFrameRate = 0;
             _currentFrameNumber = 0;
-            _duplicating = false;
-            Interlocked.Exchange(ref _frameRateTimer, null)?.Dispose();
-            Interlocked.Exchange(ref _duplicationThread, null)?.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
-            Interlocked.Exchange(ref _pointerBitmap, null)?.Dispose();
-            Interlocked.Exchange(ref _diagsTextFormat, null)?.Dispose();
-            Interlocked.Exchange(ref _diagsBrush, null)?.Dispose();
-            Interlocked.Exchange(ref _frame, null)?.Dispose();
-            Interlocked.Exchange(ref _renderTarget, null)?.Dispose();
-            Interlocked.Exchange(ref _copy, null)?.Dispose();
-            Interlocked.Exchange(ref _output, null)?.Dispose();
-            Interlocked.Exchange(ref _outputDuplication, null)?.Dispose();
+            _desktopSize = new Lazy<Size2>(CreateDesktopSize);
+            _pointerBitmap = Dispose(_pointerBitmap);
+            _diagsTextFormat = Reset(_diagsTextFormat, CreateDiagsTextFormat);
+            _diagsBrush = Reset(_diagsBrush, CreateDiagsBrush);
+            _frame = Dispose(_frame);
+            _renderTarget = Reset(_renderTarget, CreateRenderTarget);
+            _frameCopy = Reset(_frameCopy, CreateFrameCopy);
+            _output = Reset(_output, CreateOutput);
+            _outputDuplication = Reset(_outputDuplication, CreateOutputDuplication);
 #if DEBUG
-            Interlocked.Exchange(ref _deviceDebug, null)?.Dispose();
+            _deviceDebug = Reset(_deviceDebug, CreateDeviceDebug);
 #endif
-            Interlocked.Exchange(ref _device, null)?.Dispose();
+            _device = Reset(_device, CreateDevice);
         }
 
         private void OnOptionsChanged(object sender, PropertyChangedEventArgs e)
@@ -554,8 +409,9 @@ namespace Duplicator
             {
                 case nameof(DuplicatorOptions.Adapter):
                 case nameof(DuplicatorOptions.Output):
-                    var duplicating = _duplicating;
+                    var duplicating = IsDuplicating;
                     IsDuplicating = false;
+                    DisposeDuplication();
                     IsDuplicating = duplicating;
                     break;
 
@@ -565,16 +421,172 @@ namespace Duplicator
             }
         }
 
+#if DEBUG
+        private DeviceDebug CreateDeviceDebug()
+        {
+            return _device.Value.QueryInterface<DeviceDebug>();
+        }
+#endif
+
+        private SharpDX.Direct3D11.Device CreateDevice()
+        {
+            using (var fac = new SharpDX.DXGI.Factory1())
+            {
+                using (var adapter = Options.GetAdapter())
+                {
+                    if (adapter == null)
+                        return null;
+
+                    var flags = DeviceCreationFlags.BgraSupport;
+                    //flags |= DeviceCreationFlags.VideoSupport;
+#if DEBUG
+                    flags |= DeviceCreationFlags.Debug;
+#endif
+                    return new SharpDX.Direct3D11.Device(adapter, flags);
+                }
+            }
+        }
+
+        private Size2 CreateDesktopSize()
+        {
+            return _output.Value != null ? new Size2(
+                _output.Value.Description.DesktopBounds.Right - _output.Value.Description.DesktopBounds.Left,
+                _output.Value.Description.DesktopBounds.Bottom - _output.Value.Description.DesktopBounds.Top) : new Size2();
+        }
+
+        private Output1 CreateOutput()
+        {
+            return Options.GetOutput();
+        }
+
+        private Texture2D CreateFrameCopy()
+        {
+            var desc = new Texture2DDescription()
+            {
+                CpuAccessFlags = CpuAccessFlags.Read,
+                BindFlags = BindFlags.None,
+                Format = Format.B8G8R8A8_UNorm,
+                Width = DesktopSize.Width,
+                Height = DesktopSize.Height,
+                OptionFlags = ResourceOptionFlags.None,
+                MipLevels = 1,
+                ArraySize = 1,
+                SampleDescription = { Count = 1, Quality = 0 },
+                Usage = ResourceUsage.Staging
+            };
+
+            return new Texture2D(_device.Value, desc);
+        }
+
+        private Brush CreateDiagsBrush()
+        {
+            return new SolidColorBrush(_renderTarget.Value, new RawColor4(1, 0, 0, 1));
+        }
+
+        private TextFormat CreateDiagsTextFormat()
+        {
+            using (var fac = new SharpDX.DirectWrite.Factory1())
+            {
+                var diagsTextFormat = new TextFormat(fac, "Lucida Console", 16);
+                diagsTextFormat.WordWrapping = WordWrapping.Character;
+                return diagsTextFormat;
+            }
+        }
+
+        private DeviceContextRenderTarget CreateRenderTarget()
+        {
+            using (var fac = new SharpDX.Direct2D1.Factory1())
+            {
+                var props = new RenderTargetProperties();
+                props.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Ignore);
+                return new DeviceContextRenderTarget(fac, props);
+            }
+        }
+
+        private OutputDuplication CreateOutputDuplication()
+        {
+            return _output.Value?.DuplicateOutput(_device.Value);
+        }
+
+        private DXGIDeviceManager CreateDeviceManager()
+        {
+            var devManager = new DXGIDeviceManager();
+            MediaFactory.CreateDXGIDeviceManager(out int token, devManager);
+            devManager.ResetDevice(_device.Value);
+            return devManager;
+        }
+
+        private SinkWriter CreateSinkWriter()
+        {
+            MediaManager.Startup(); // this can be called more than one time
+
+            if (string.IsNullOrEmpty(RecordFilePath))
+            {
+                RecordFilePath = Options.GetNewFilePath();
+            }
+
+            RecordFilePath += ".mp4"; // we only support MP4...
+
+            string dir = Path.GetDirectoryName(RecordFilePath);
+            if (!Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            int width = DesktopSize.Width;
+            int height = DesktopSize.Height;
+
+            SinkWriter writer;
+            using (var ma = new MediaAttributes())
+            {
+                // note this doesn't mean you *will* have a hardware transform. Intel Media SDK sometimes is not happy with configuration for HDCP issues.
+                ma.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, Options.EnableHardwareTransforms ? 1 : 0);
+                ma.Set(SinkWriterAttributeKeys.D3DManager, _devManager.Value);
+                ma.Set(SinkWriterAttributeKeys.DisableThrottling, Options.DisableThrottling ? 1 : 0);
+                ma.Set(SinkWriterAttributeKeys.LowLatency, Options.LowLatency);
+                writer = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, ma);
+            }
+
+            using (var output = new MediaType())
+            {
+                // avg bitrate is mandatory for builtin encoder, not for some others like Intel Media SDK
+                // in fact, what will that be used for? anyway, here is a standard formula from here
+                // https://stackoverflow.com/questions/5024114/suggested-compression-ratio-with-h-264
+                //
+                // [image width] x [image height] x [framerate] x [motion rank] x 0.07 = [desired bitrate]
+                //
+
+                int motionRank = 1;
+                int bitrate = (int)(width * height * Options.RecordingFrameRate * motionRank);
+                if (bitrate <= 0)
+                    throw new InvalidOperationException();
+
+                output.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
+                output.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                output.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
+                output.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
+                output.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
+                output.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
+                writer.AddStream(output, out _videoOutputIndex);
+            }
+
+            using (var input = new MediaType())
+            {
+                input.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Argb32);
+                input.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
+                input.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
+                writer.SetInputMediaType(_videoOutputIndex, input, null);
+            }
+
+            bool bi = H264Encoder.IsBuiltinEncoder(writer, _videoOutputIndex);
+            writer.BeginWriting();
+            _watch.Start();
+            return writer;
+        }
+
         private void ComputePointerBitmap(ref OutputDuplicateFrameInformation frameInfo)
         {
-            var od = _outputDuplication;
-            if (od == null)
-                return;
-
-            var dcrt = _renderTarget;
-            if (dcrt == null)
-                return;
-
             var bmp = _pointerBitmap;
             _pointerBitmap = null;
             if (bmp != null)
@@ -586,7 +598,7 @@ namespace Duplicator
             OutputDuplicatePointerShapeInformation shapeInfo;
             try
             {
-                od.GetFramePointerShape(frameInfo.PointerShapeBufferSize, pointerShapeBuffer, out int shapeInfoSize, out shapeInfo);
+                _outputDuplication.Value.GetFramePointerShape(frameInfo.PointerShapeBufferSize, pointerShapeBuffer, out int shapeInfoSize, out shapeInfo);
                 //Trace("new pointer alloc size: " + frameInfo.PointerShapeBufferSize + " size:" + shapeInfo.Width + "x" + shapeInfo.Height +
                 //    " hs: " + shapeInfo.HotSpot.X + "x" + shapeInfo.HotSpot.Y +
                 //    " pitch: " + shapeInfo.Pitch + " type: " + shapeInfo.Type +
@@ -623,7 +635,7 @@ namespace Duplicator
 
                 var bprops = new BitmapProperties();
                 bprops.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Premultiplied);
-                _pointerBitmap = new Bitmap(dcrt, size, new DataPointer(pointerShapeBuffer, bufferSize), pitch, bprops);
+                _pointerBitmap = new Bitmap(_renderTarget.Value, size, new DataPointer(pointerShapeBuffer, bufferSize), pitch, bprops);
             }
             finally
             {
