@@ -30,6 +30,8 @@ namespace Duplicator
                 using (var tf = activate.ActivateObject<Transform>())
                 {
                     IsBuiltin = IsBuiltinEncoder(tf);
+                    IsDirect3D11Aware = IsDirect3D11AwareEncoder(tf);
+                    IsHardwareBased = IsHardwareBasedEncoder(tf);
                 }
             }
             catch
@@ -43,26 +45,99 @@ namespace Duplicator
         public IEnumerable<string> InputTypes { get; }
         public TransformEnumFlag Flags { get; }
         public bool IsBuiltin { get; }
+        public bool IsDirect3D11Aware { get; }
+        public bool IsHardwareBased { get; }
         public override string ToString() => FriendlyName;
 
-        public static bool IsBuiltinEncoder(SinkWriter writer, int streamIndex)
+        private static IntPtr GetTransformPtr(SinkWriter writer, int streamIndex)
         {
             if (writer == null)
                 throw new ArgumentNullException(nameof(writer));
 
-            IntPtr tf;
+            var tf = IntPtr.Zero;
             try
             {
                 writer.GetServiceForStream(streamIndex, Guid.Empty, typeof(Transform).GUID, out tf);
             }
             catch
             {
-                return false;
+                // do nothing
             }
-            if (tf == IntPtr.Zero)
+            return tf;
+        }
+
+        private static Transform GetTransform(SinkWriter writer, int streamIndex)
+        {
+            var ptr = GetTransformPtr(writer, streamIndex);
+            return ptr != IntPtr.Zero ? new Transform(ptr) : null;
+        }
+
+        public static bool IsBuiltinEncoder(SinkWriter writer, int streamIndex)
+        {
+            var ptr = GetTransformPtr(writer, streamIndex);
+            if (ptr == IntPtr.Zero)
                 return false;
 
-            return Marshal.GetObjectForIUnknown(tf) as IMFObjectInformation != null;
+            return Marshal.GetObjectForIUnknown(ptr) as IMFObjectInformation != null;
+        }
+
+        public static TOutputStreamInformation GetOutputStreamInfo(SinkWriter writer, int streamIndex)
+        {
+            using (var transform = GetTransform(writer, streamIndex))
+            {
+                if (transform == null)
+                    return new TOutputStreamInformation();
+
+                transform.GetOutputStreamInfo(streamIndex, out TOutputStreamInformation info);
+                return info;
+            }
+        }
+
+        public static bool IsDirect3D11AwareEncoder(SinkWriter writer, int streamIndex)
+        {
+            using (var transform = GetTransform(writer, streamIndex))
+            {
+                if (transform == null)
+                    return false;
+
+                return IsDirect3D11AwareEncoder(transform);
+            }
+        }
+
+        public static bool IsHardwareBasedEncoder(SinkWriter writer, int streamIndex)
+        {
+            using (var transform = GetTransform(writer, streamIndex))
+            {
+                if (transform == null)
+                    return false;
+
+                return IsHardwareBasedEncoder(transform);
+            }
+        }
+
+        public static bool IsHardwareBasedEncoder(Transform transform)
+        {
+            if (transform == null)
+                throw new ArgumentNullException(nameof(transform));
+
+            return EnumerateAttributes(transform.Attributes).Any(a => a.Key == TransformAttributeKeys.MftEnumHardwareUrlAttribute.Guid);
+        }
+
+        public static bool IsDirect3D11AwareEncoder(Transform transform)
+        {
+            if (transform == null)
+                throw new ArgumentNullException(nameof(transform));
+
+            return EnumerateAttributes(transform.Attributes).Any(a => a.Key == TransformAttributeKeys.D3D11Aware.Guid && a.Value.Equals(1));
+        }
+
+        private static IEnumerable<KeyValuePair<Guid, object>> EnumerateAttributes(MediaAttributes atts)
+        {
+            for (int i = 0; i < atts.Count; i++)
+            {
+                object value = atts.GetByIndex(i, out Guid guid);
+                yield return new KeyValuePair<Guid, object>(guid, value);
+            }
         }
 
         public static bool IsBuiltinEncoder(Transform transform)

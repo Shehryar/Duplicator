@@ -29,6 +29,7 @@ namespace WinDuplicator
                 sb.AppendLine(" " + dec.FriendlyName);
                 sb.AppendLine("  Clsid: " + dec.Clsid);
                 sb.AppendLine("  Flags: " + dec.Flags);
+                sb.AppendLine("  D3D11 Aware: " + dec.IsDirect3D11Aware);
                 sb.AppendLine("  Supported Input types:");
                 foreach (var type in dec.InputTypes)
                 {

@@ -40,6 +40,9 @@ namespace Duplicator
         private int _audioGapsCount;
         private bool _discontinuity;
 
+        // dx
+        private Lazy<SwapChain1> _sw;
+
         // duplicating
         private bool _duplicationEnabled;
         private Lazy<SharpDX.Direct3D11.Device> _device;
@@ -102,13 +105,17 @@ namespace Duplicator
             _soundCapture.ShareMode = AudioClientShareMode.Shared;
             _soundCapture.DataAvailable += SoundCaptureDataAvailable;
             _soundCapture.RecordingStopped += SoundCaptureRecordingStopped;
+            _sw = new Lazy<SwapChain1>(CreateSwapChain);
         }
 
         public DuplicatorOptions Options { get; }
         public Size2 DesktopSize => _desktopSize.Value;
         public Size2 RenderSize { get; private set; }
 
+        public bool IsUsingDirect3D11AwareEncoder { get; private set; }
+        public bool IsUsingHardwareBasedEncoder { get; private set; }
         public bool IsUsingBuiltinEncoder { get; private set; }
+        public IntPtr Hwnd { get; set; }
         public IntPtr Hdc { get; set; }
         public string RecordFilePath { get; set; }
         public Size2 Size
@@ -418,6 +425,31 @@ namespace Duplicator
 
         private void RenderFrame()
         {
+            // How to render by using a Direct2D device context
+            // https://msdn.microsoft.com/en-us/library/windows/desktop/hh780339.aspx
+            using (var fac = new SharpDX.Direct2D1.Factory1())
+            {
+                using (var dxDev = _device.Value.QueryInterface<SharpDX.DXGI.Device>())
+                {
+                    using (var dev2 = new SharpDX.Direct2D1.Device(fac, dxDev))
+                    {
+                        using (var dc = new SharpDX.Direct2D1.DeviceContext(dev2, DeviceContextOptions.EnableMultithreadedOptimizations))
+                        {
+                            using (var backBuffer = _sw.Value.GetBackBuffer<Surface>(0))
+                            {
+                                using (var bmp = new Bitmap1(dc, backBuffer))
+                                {
+                                    dc.Target = bmp;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private void RenderFrame2()
+        {
             if (Hdc == IntPtr.Zero || RenderSize.Width == 0 || RenderSize.Height == 0)
                 return;
 
@@ -583,6 +615,14 @@ namespace Duplicator
                 case nameof(DuplicatorOptions.Adapter):
                 case nameof(DuplicatorOptions.Output):
                     var duplicating = IsDuplicating;
+                    if (!duplicating)
+                    {
+                        ClearFrame();
+                        DisposeRecording();
+                        DisposeDuplication();
+                        break;
+                    }
+
                     IsDuplicating = false;
                     IsDuplicating = duplicating;
                     break;
@@ -607,11 +647,41 @@ namespace Duplicator
                         return null;
 
                     var flags = DeviceCreationFlags.BgraSupport;
-                    //flags |= DeviceCreationFlags.VideoSupport;
+                    flags |= DeviceCreationFlags.VideoSupport;
 #if DEBUG
                     flags |= DeviceCreationFlags.Debug;
 #endif
                     return new SharpDX.Direct3D11.Device(adapter, flags);
+                }
+            }
+        }
+
+        private SwapChain1 CreateSwapChain()
+        {
+            // https://msdn.microsoft.com/en-us/library/windows/desktop/hh780339.aspx
+            using (var fac = new SharpDX.Direct2D1.Factory1())
+            {
+                using (var dxFac = new SharpDX.DXGI.Factory2(
+#if DEBUG
+                    true
+#else
+                    false
+#endif
+                    ))
+                {
+                    using (var dxDev = _device.Value.QueryInterface<SharpDX.DXGI.Device1>())
+                    {
+                        var desc = new SwapChainDescription1();
+                        desc.SampleDescription = new SampleDescription(1, 0);
+                        desc.SwapEffect = SwapEffect.FlipSequential;
+                        desc.Scaling = Scaling.None;
+                        desc.Usage = Usage.RenderTargetOutput;
+                        desc.Format = Format.B8G8R8A8_UNorm;
+                        desc.BufferCount = 2;
+                        var sw = new SwapChain1(dxFac, dxDev, Hwnd, ref desc);
+                        dxDev.MaximumFrameLatency = 1;
+                        return sw;
+                    }
                 }
             }
         }
@@ -635,6 +705,7 @@ namespace Duplicator
                 MipLevels = 1,
                 ArraySize = 1,
                 SampleDescription = { Count = 1, Quality = 0 },
+                //Usage = ResourceUsage.Default
                 Usage = ResourceUsage.Staging
             };
 
@@ -766,9 +837,24 @@ namespace Duplicator
             }
 
             IsUsingBuiltinEncoder = H264Encoder.IsBuiltinEncoder(writer, _videoOutputIndex);
-            Trace("IsBuiltinEncoder: " + IsUsingBuiltinEncoder);
+            IsUsingDirect3D11AwareEncoder = H264Encoder.IsDirect3D11AwareEncoder(writer, _videoOutputIndex);
+            IsUsingHardwareBasedEncoder = H264Encoder.IsHardwareBasedEncoder(writer, _videoOutputIndex);
+            var info = H264Encoder.GetOutputStreamInfo(writer, _videoOutputIndex);
+
+            // hardware encoders has MFT_OUTPUT_STREAM_PROVIDES_SAMPLES defined
+            var infof = (MftOutputStreamInformationFlags)info.DwFlags;
+            Trace("IsBuiltinEncoder: " + IsUsingBuiltinEncoder + " IsUsingDirect3D11AwareEncoder: " + IsUsingDirect3D11AwareEncoder + " IsUsingHardwareBasedEncoder: " + IsUsingHardwareBasedEncoder);
+            Trace("OutputStreamInfo flags: " + infof);
             OnPropertyChanged(nameof(IsUsingBuiltinEncoder));
+            OnPropertyChanged(nameof(IsUsingDirect3D11AwareEncoder));
+            OnPropertyChanged(nameof(IsUsingHardwareBasedEncoder));
             Trace("Begin Writing");
+
+            //if (IsUsingDirect3D11AwareEncoder)
+            //{
+            //    writer.Set(SinkWriterAttributeKeys.D3DManager, _devManager.Value);
+            //}
+
             writer.BeginWriting();
             _watch.Start();
             _soundCapture.StartRecording();

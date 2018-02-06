@@ -35,6 +35,7 @@ namespace WinDuplicator
 
             splitContainerMain.Panel1.HandleCreated += (sender, e) =>
             {
+                _duplicator.Hwnd = splitContainerMain.Panel1.Handle;
                 _graphics = Graphics.FromHwnd(splitContainerMain.Panel1.Handle);
                 _duplicator.Hdc = _graphics.GetHdc();
             };
