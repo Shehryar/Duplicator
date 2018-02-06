@@ -14,7 +14,6 @@ namespace WinDuplicator
 
         private WinDuplicatorOptions _options;
         private Duplicator.Duplicator _duplicator;
-        private Graphics _graphics;
 
         public Main()
         {
@@ -36,15 +35,12 @@ namespace WinDuplicator
             splitContainerMain.Panel1.HandleCreated += (sender, e) =>
             {
                 _duplicator.Hwnd = splitContainerMain.Panel1.Handle;
-                _graphics = Graphics.FromHwnd(splitContainerMain.Panel1.Handle);
-                _duplicator.Hdc = _graphics.GetHdc();
             };
 
             splitContainerMain.Panel1.HandleDestroyed += (sender, e) =>
             {
-                _duplicator.Hdc = IntPtr.Zero;
-                _graphics.ReleaseHdc();
-                _graphics.Dispose();
+                _duplicator.Hwnd = IntPtr.Zero;
+
             };
         }
 
