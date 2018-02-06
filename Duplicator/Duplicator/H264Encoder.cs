@@ -7,10 +7,11 @@ using SharpDX.Multimedia;
 
 namespace Duplicator
 {
-    public class H264Encoder
+    public class H264Encoder : IDisposable
     {
         private H264Encoder(Activate activate)
         {
+            Activate = activate;
             FriendlyName = activate.Get(TransformAttributeKeys.MftFriendlyNameAttribute);
             Clsid = activate.Get(TransformAttributeKeys.MftTransformClsidAttribute);
             Flags = (TransformEnumFlag)activate.Get(TransformAttributeKeys.TransformFlagsAttribute);
@@ -40,6 +41,7 @@ namespace Duplicator
             }
         }
 
+        public Activate Activate { get; }
         public string FriendlyName { get; }
         public Guid Clsid { get; }
         public IEnumerable<string> InputTypes { get; }
@@ -48,6 +50,10 @@ namespace Duplicator
         public bool IsDirect3D11Aware { get; }
         public bool IsHardwareBased { get; }
         public override string ToString() => FriendlyName;
+
+        public Transform GetTransform() => Activate.ActivateObject<Transform>();
+
+        public void Dispose() => Activate.Dispose();
 
         private static IntPtr GetTransformPtr(SinkWriter writer, int streamIndex)
         {
@@ -131,7 +137,7 @@ namespace Duplicator
             return EnumerateAttributes(transform.Attributes).Any(a => a.Key == TransformAttributeKeys.D3D11Aware.Guid && a.Value.Equals(1));
         }
 
-        private static IEnumerable<KeyValuePair<Guid, object>> EnumerateAttributes(MediaAttributes atts)
+        internal static IEnumerable<KeyValuePair<Guid, object>> EnumerateAttributes(MediaAttributes atts)
         {
             for (int i = 0; i < atts.Count; i++)
             {
