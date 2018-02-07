@@ -1,5 +1,6 @@
-﻿using System.Windows.Forms;
-using NAudio.CoreAudioApi;
+﻿using System.Linq;
+using System.Windows.Forms;
+using Duplicator;
 
 namespace WinDuplicator
 {
@@ -10,18 +11,15 @@ namespace WinDuplicator
             InitializeComponent();
             Icon = Main.EmbeddedIcon;
 
-            using (var enumerator = new MMDeviceEnumerator())
+            listViewMain.Select();
+            foreach (var device in LoopbackAudioCapture.GetDevices(LoopbackAudioCapture.DataFlow.Render).Where(d => d.State == LoopbackAudioCapture.AudioDeviceState.Active))
             {
-                listViewMain.Select();
-                foreach (var device in enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+                var item = listViewMain.Items.Add(device.FriendlyName);
+                item.Tag = device;
+                if (selectedAudioDevice != null && device.FriendlyName == selectedAudioDevice)
                 {
-                    var item = listViewMain.Items.Add(device.FriendlyName);
-                    item.Tag = device;
-                    if (selectedAudioDevice != null && device.FriendlyName == selectedAudioDevice)
-                    {
-                        Device = device;
-                        item.Selected = true;
-                    }
+                    Device = device;
+                    item.Selected = true;
                 }
             }
 
@@ -29,7 +27,7 @@ namespace WinDuplicator
             UpdateControls();
         }
 
-        public MMDevice Device { get; private set; }
+        public LoopbackAudioCapture.AudioDevice Device { get; private set; }
 
         private void ChooseAdapter_FormClosing(object sender, FormClosingEventArgs e)
         {
@@ -37,7 +35,7 @@ namespace WinDuplicator
             {
                 if (listViewMain.SelectedItems.Count > 0)
                 {
-                    Device = (MMDevice)listViewMain.SelectedItems[0].Tag;
+                    Device = (LoopbackAudioCapture.AudioDevice)listViewMain.SelectedItems[0].Tag;
                 }
             }
         }

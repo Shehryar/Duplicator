@@ -4,8 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using NAudio.CoreAudioApi;
-using NAudio.Wave;
 using SharpDX.DXGI;
 
 namespace Duplicator
@@ -41,7 +39,7 @@ namespace Duplicator
             OutputDirectoryPath = GetDefaultOutputDirectoryPath();
             EnableHardwareTransforms = true;
             EnableSoundRecording = true;
-            AudioDevice = WasapiLoopbackCapture.GetDefaultLoopbackCaptureDevice()?.FriendlyName;
+            AudioDevice = LoopbackAudioCapture.GetSpeakersDevice()?.FriendlyName;
         }
 
         [DisplayName("File Format")]
@@ -129,13 +127,7 @@ namespace Duplicator
             }
         }
 
-        public MMDevice GetAudioDevice()
-        {
-            using (var enumerator = new MMDeviceEnumerator())
-            {
-                return enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active).FirstOrDefault(d => d.FriendlyName == AudioDevice);
-            }
-        }
+        public LoopbackAudioCapture.AudioDevice GetAudioDevice() => LoopbackAudioCapture.GetDevices(LoopbackAudioCapture.DataFlow.All).FirstOrDefault(d => d.FriendlyName == AudioDevice);
 
         public Adapter1 GetAdapter()
         {

@@ -7,9 +7,6 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
-using NAudio.CoreAudioApi;
-using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
 using SharpDX;
 using SharpDX.Direct2D1;
 using SharpDX.Direct3D11;
@@ -43,7 +40,7 @@ namespace Duplicator
         // sound recording
         private int _audioOutputIndex;
         private long _lastAudioWatch;
-        private WasapiLoopbackCapture _soundCapture;
+        private LoopbackAudioCapture _audioCapture;
         private int _audioSamplesCount;
         private int _audioGapsCount;
         private bool _discontinuity;
@@ -105,11 +102,10 @@ namespace Duplicator
                 _currentFrameNumber = 0;
             }, null, 0, 1000);
 
-            var ad = Options.GetAudioDevice() ?? WasapiLoopbackCapture.GetDefaultLoopbackCaptureDevice();
-            _soundCapture = new WasapiLoopbackCapture(ad);
-            _soundCapture.ShareMode = AudioClientShareMode.Shared;
-            _soundCapture.DataAvailable += SoundCaptureDataAvailable;
-            _soundCapture.RecordingStopped += SoundCaptureRecordingStopped;
+            _audioCapture = new LoopbackAudioCapture();
+            _audioCapture.RaiseNativeDataEvents = true;
+            _audioCapture.RaiseDataEvents = false;
+            _audioCapture.NativeDataReady += AudioCaptureDataReady;
 
             _swapChain = new Lazy<SwapChain1>(CreateSwapChain);
             _2D1Device = new Lazy<SharpDX.Direct2D1.Device>(Create2D1Device);
@@ -220,25 +216,20 @@ namespace Duplicator
             }
         }
 
-        private void SoundCaptureRecordingStopped(object sender, StoppedEventArgs e)
+        private void AudioCaptureDataReady(object sender, LoopbackAudioCaptureNativeDataEventArgs e)
         {
-            Trace("error: " + e.Exception);
+            WriteAudioSample(e.Data, e.Size);
+            e.Handled = true;
         }
 
-        private void SoundCaptureDataAvailable(object sender, WaveInEventArgs e)
+        private void WriteAudioSample(IntPtr data, int size)
         {
-            //Trace("buffer: " + e.Buffer.Length + " recorded: " + e.BytesRecorded);
-            WriteAudioSample(e.Buffer, e.BytesRecorded);
-        }
-
-        private void WriteAudioSample(byte[] bytes, int recorded)
-        {
-            if (recorded == 0)
+            if (size == 0)
             {
                 var elapsedNs = (10000000 * _watch.ElapsedTicks) / Stopwatch.Frequency;
                 try
                 {
-                    //Trace("SendStreamTick : " + elapsedNs);
+                    Trace("SendStreamTick : " + elapsedNs);
                     _sinkWriter.Value.SendStreamTick(_audioOutputIndex, elapsedNs);
                 }
                 catch (Exception e)
@@ -251,20 +242,11 @@ namespace Duplicator
                 return;
             }
 
-            int size = recorded / 2;
             using (var buffer = MediaFactory.CreateMemoryBuffer(size))
             {
                 var ptr = buffer.Lock(out int max, out int current);
-                using (var stream = new RawSourceWaveStream(bytes, 0, recorded, _soundCapture.WaveFormat))
-                {
-                    var prov = new WaveToSampleProvider(stream);
-                    var prov2 = new WdlResamplingSampleProvider(prov, 44100);
-                    var wav = new SampleToWaveProvider16(prov2);
-                    var pcm = new byte[size];
-                    int read = wav.Read(pcm, 0, size);
-                    Marshal.Copy(pcm, 0, ptr, read);
-                    buffer.CurrentLength = read;
-                }
+                CopyMemory(ptr, data, size);
+                buffer.CurrentLength = size;
                 buffer.Unlock();
 
                 using (var sample = MediaFactory.CreateSample())
@@ -280,7 +262,7 @@ namespace Duplicator
                     sample.SampleTime = _lastAudioWatch;
                     _lastAudioWatch = elapsedNs;
                     sample.AddBuffer(buffer);
-                    //Trace("sample time ns: " + sample.SampleTime + " duration: " + sample.SampleDuration + " bytes: " + bytes.Length + " recorded: " + recorded);
+                    //Trace("sample time ns: " + sample.SampleTime + " bytes: " + size);
                     _sinkWriter.Value.WriteSample(_audioOutputIndex, sample);
                     _audioSamplesCount++;
                 }
@@ -507,12 +489,7 @@ namespace Duplicator
                 if (!_sinkWriter.IsValueCreated)
                     return;
 
-                _soundCapture.StopRecording();
-                while (_soundCapture.CaptureState != CaptureState.Stopped)
-                {
-                    Trace("Waiting for sound capture stop");
-                    Thread.Sleep(10);
-                }
+                _audioCapture.Stop();
 
                 if (_videoSamplesCount > 0)
                 {
@@ -749,7 +726,7 @@ namespace Duplicator
                 ma.Set(SinkWriterAttributeKeys.D3DManager, _devManager.Value);
                 ma.Set(SinkWriterAttributeKeys.DisableThrottling, Options.DisableThrottling ? 1 : 0);
                 ma.Set(SinkWriterAttributeKeys.LowLatency, Options.LowLatency);
-                Trace("CreateSinkWriterFromURL pazth: " + RecordFilePath);
+                Trace("CreateSinkWriterFromURL path: " + RecordFilePath);
                 writer = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, ma);
             }
 
@@ -827,7 +804,8 @@ namespace Duplicator
 
             if (Options.EnableSoundRecording)
             {
-                _soundCapture.StartRecording();
+                var ad = Options.GetAudioDevice() ?? LoopbackAudioCapture.GetSpeakersDevice();
+                _audioCapture.Start(ad);
             }
             OnPropertyChanged(nameof(IsRecording));
             return writer;
@@ -957,7 +935,7 @@ namespace Duplicator
             return ptr;
         }
 
-        private static void Trace(object value, [CallerMemberName] string methodName = null) => _provider.WriteMessageEvent("#Duplicator(" + Thread.CurrentThread.ManagedThreadId + ")::" + methodName + " " + string.Format("{0}", value), 0, 0);
+        internal static void Trace(object value, [CallerMemberName] string methodName = null) => _provider.WriteMessageEvent("#Duplicator(" + Thread.CurrentThread.ManagedThreadId + ")::" + methodName + " " + string.Format("{0}", value), 0, 0);
 
         // a multi thread version is:
         // disposable = Interlocked.Exchange(ref disposable, null)?.Dispose();
@@ -975,6 +953,9 @@ namespace Duplicator
             }
             return new Lazy<T>(valueFactory);
         }
+
+        [DllImport("kernel32")]
+        private static extern void CopyMemory(IntPtr Destination, IntPtr Source, int Length);
 
 #if DEBUG
         private static void DXGIReportLiveObjects() => DXGIReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_FLAGS.DXGI_DEBUG_RLO_ALL);
