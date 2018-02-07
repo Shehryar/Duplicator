@@ -155,13 +155,17 @@ namespace Duplicator
                                     break;
 
                                 captureClient.GetBuffer(out IntPtr dataPtr, out int frames, out CoreAudio.AUDCLNT_BUFFERFLAGS flags, out long devPosition, out long qpcPosition);
-                                //if (!flags.HasFlag(CoreAudio.AUDCLNT_BUFFERFLAGS.AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) &&
-                                //    !flags.HasFlag(CoreAudio.AUDCLNT_BUFFERFLAGS.AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR))
+                                Duplicator.Trace("frames:" + frames + " flags: " + flags);
+                                int bytesCount;
+                                if (flags.HasFlag(CoreAudio.AUDCLNT_BUFFERFLAGS.AUDCLNT_BUFFERFLAGS_SILENT))
                                 {
-                                    // we let go silent
-                                    var bytesCount = frames * blockAlign;
-                                    RaiseEvents(dataPtr, bytesCount, ref data);
+                                    bytesCount = 0;
                                 }
+                                else
+                                {
+                                    bytesCount = frames * blockAlign;
+                                }
+                                RaiseEvents(dataPtr, bytesCount, ref data);
                                 captureClient.ReleaseBuffer(frames);
                             }
                             while (true);
