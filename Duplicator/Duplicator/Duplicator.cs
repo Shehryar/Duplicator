@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using SharpDX;
 using SharpDX.Direct2D1;
 using SharpDX.Direct3D11;
@@ -26,33 +27,39 @@ namespace Duplicator
         // or use is with MFTrace (see config.xml and t.bat in the project)
         private static EventProvider _provider = new EventProvider(new Guid("964D4572-ADB9-4F3A-8170-FCBECEC27465"));
 
-        // recording
+        // recording common
         private bool _recordingEnabled;
         private Lazy<SinkWriter> _sinkWriter;
+        private Stopwatch _watch = new Stopwatch();
+        private Lazy<MediaSink> _sink;
+        private object _lock = new object();
+
+        // video recording
+        private Lazy<DXGIDeviceManager> _devManager;
         private Lazy<Texture2D> _frameCopy;
         private int _videoOutputIndex;
+        private long _lastVideoWatch;
+
+        // sound recording
         private int _audioOutputIndex;
-        private Lazy<DXGIDeviceManager> _devManager;
-        private Stopwatch _watch = new Stopwatch();
-        private long _lastNs;
+        private long _lastAudioWatch;
         private WasapiLoopbackCapture _soundCapture;
         private int _audioSamplesCount;
         private int _audioGapsCount;
         private bool _discontinuity;
-        private object _lock = new object();
 
         // duplicating
         private Lazy<SwapChain1> _swapChain;
         private Lazy<SharpDX.Direct2D1.Device> _2D1Device;
         private Lazy<SharpDX.Direct2D1.DeviceContext> _backBufferDc;
-        private int _resized;
-        private bool _duplicationEnabled;
         private Lazy<SharpDX.Direct3D11.Device> _device;
         private Lazy<OutputDuplication> _outputDuplication;
         private Lazy<Output1> _output;
         private Lazy<TextFormat> _diagsTextFormat;
         private Lazy<Brush> _diagsBrush;
         private Lazy<Size2> _desktopSize;
+        private int _resized;
+        private bool _duplicationEnabled;
         private Bitmap _pointerBitmap;
         private System.Threading.Timer _frameRateTimer;
         private Thread _duplicationThread;
@@ -107,17 +114,18 @@ namespace Duplicator
             _swapChain = new Lazy<SwapChain1>(CreateSwapChain);
             _2D1Device = new Lazy<SharpDX.Direct2D1.Device>(Create2D1Device);
             _backBufferDc = new Lazy<SharpDX.Direct2D1.DeviceContext>(CreateBackBufferDc);
+            _sink = new Lazy<MediaSink>(CreateMediaSink);
         }
 
         public DuplicatorOptions Options { get; }
         public Size2 DesktopSize => _desktopSize.Value;
         public Size2 RenderSize { get; private set; }
-
         public bool IsUsingDirect3D11AwareEncoder { get; private set; }
         public bool IsUsingHardwareBasedEncoder { get; private set; }
         public bool IsUsingBuiltinEncoder { get; private set; }
         public IntPtr Hwnd { get; set; }
         public string RecordFilePath { get; set; }
+
         public Size2 Size
         {
             get => _size;
@@ -198,20 +206,14 @@ namespace Duplicator
                 using (buffer)
                 using (var buffer2 = buffer.QueryInterface<Buffer2D>())
                 {
-                    // in 100-nanosecond units
-                    // 1 ns = 1/1000000000s;
-                    // 100 ns = 100/1000000000s = 1/10000000s
+                    var elapsedNs = (10000000 * _watch.ElapsedTicks) / Stopwatch.Frequency;
+                    sample.SampleTime = _lastVideoWatch;
+                    sample.SampleDuration = elapsedNs - _lastVideoWatch;
+                    _lastVideoWatch = elapsedNs;
 
-                    var elapsedTicks = _watch.ElapsedTicks;
-                    var elapsedNs = (10000000 * elapsedTicks) / Stopwatch.Frequency;
-                    sample.SampleDuration = elapsedNs - _lastNs;
-                    sample.SampleTime = elapsedNs;
-
-                    //sample.SampleDuration = (long)(10000000 / Options.RecordingFrameRate);
-                    _lastNs = elapsedNs;
                     buffer.CurrentLength = buffer2.ContiguousLength;
                     sample.AddBuffer(buffer);
-                    Trace("time: " + sample.SampleTime + " duration: " + sample.SampleDuration);
+                    //Trace("[" + _videoSamplesCount + "] time: " + sample.SampleTime + " duration: " + sample.SampleDuration);
                     _sinkWriter.Value.WriteSample(_videoOutputIndex, sample);
                     _videoSamplesCount++;
                 }
@@ -233,8 +235,7 @@ namespace Duplicator
         {
             if (recorded == 0)
             {
-                var elapsedTicks = _watch.ElapsedTicks;
-                var elapsedNs = (10000000 * elapsedTicks) / Stopwatch.Frequency;
+                var elapsedNs = (10000000 * _watch.ElapsedTicks) / Stopwatch.Frequency;
                 try
                 {
                     //Trace("SendStreamTick : " + elapsedNs);
@@ -250,30 +251,20 @@ namespace Duplicator
                 return;
             }
 
-            using (var buffer = MediaFactory.CreateMemoryBuffer(recorded))
+            int size = recorded / 2;
+            using (var buffer = MediaFactory.CreateMemoryBuffer(size))
             {
                 var ptr = buffer.Lock(out int max, out int current);
-                int offset = 0;
-                var provider = new WaveFloatTo16Provider(new RawSourceWaveStream(bytes, 0, recorded, _soundCapture.WaveFormat));
-
-                // this buffer size should be ok (since 32 PCM/2 = 16 PCM)
-                // but we still do a loop, never know...
-                var pcm = new byte[recorded / 2];
-                using (var resampler = new MediaFoundationResampler(provider, new NAudio.Wave.WaveFormat(44100, 16, 2)))
+                using (var stream = new RawSourceWaveStream(bytes, 0, recorded, _soundCapture.WaveFormat))
                 {
-                    do
-                    {
-                        int read = resampler.Read(pcm, 0, pcm.Length);
-                        //Trace("resampled read: " + read);
-                        if (read == 0)
-                            break;
-
-                        Marshal.Copy(pcm, 0, ptr + offset, read);
-                        offset += read;
-                    }
-                    while (true);
+                    var prov = new WaveToSampleProvider(stream);
+                    var prov2 = new WdlResamplingSampleProvider(prov, 44100);
+                    var wav = new SampleToWaveProvider16(prov2);
+                    var pcm = new byte[size];
+                    int read = wav.Read(pcm, 0, size);
+                    Marshal.Copy(pcm, 0, ptr, read);
+                    buffer.CurrentLength = read;
                 }
-                buffer.CurrentLength = offset;
                 buffer.Unlock();
 
                 using (var sample = MediaFactory.CreateSample())
@@ -285,42 +276,15 @@ namespace Duplicator
                         sample.Set(SampleAttributeKeys.Discontinuity, true);
                     }
 
-                    var elapsedTicks = _watch.ElapsedTicks;
-                    var elapsedNs = (10000000 * elapsedTicks) / Stopwatch.Frequency;
-                    sample.SampleDuration = elapsedNs - _lastNs;
-                    sample.SampleTime = elapsedNs;
-                    _lastNs = elapsedNs;
+                    var elapsedNs = (10000000 * _watch.ElapsedTicks) / Stopwatch.Frequency;
+                    sample.SampleTime = _lastAudioWatch;
+                    _lastAudioWatch = elapsedNs;
                     sample.AddBuffer(buffer);
-                    //Trace("WriteSample ns: " + elapsedNs);
+                    //Trace("sample time ns: " + sample.SampleTime + " duration: " + sample.SampleDuration + " bytes: " + bytes.Length + " recorded: " + recorded);
                     _sinkWriter.Value.WriteSample(_audioOutputIndex, sample);
                     _audioSamplesCount++;
                 }
             }
-        }
-
-        private class IntPtrStream : Stream
-        {
-            private IntPtr _ptr;
-
-            public IntPtrStream(IntPtr ptr, long length)
-            {
-                _ptr = ptr;
-                Length = length;
-                Position = 0;
-            }
-
-            public override bool CanRead => true;
-            public override bool CanSeek => throw new NotImplementedException();
-            public override bool CanWrite => true;
-
-            public override void Write(byte[] buffer, int offset, int count) => Marshal.Copy(buffer, offset, _ptr + (int)Position, count);
-
-            public override long Length { get; }
-            public override long Position { get; set; }
-            public override void Flush() { }
-            public override int Read(byte[] buffer, int offset, int count) => throw new NotImplementedException();
-            public override long Seek(long offset, SeekOrigin origin) => throw new NotImplementedException();
-            public override void SetLength(long value) => throw new NotImplementedException();
         }
 
         private bool TryGetFrame()
@@ -374,6 +338,7 @@ namespace Duplicator
             return true;
         }
 
+        // we do everything in here to avoid threading issues
         private void DuplicatorThreadFunc()
         {
             // force od creation here so we can notify we're duplicating
@@ -536,6 +501,7 @@ namespace Duplicator
 
         private void DisposeRecording()
         {
+            // dispose could be called by other threads, so we need to protect this
             lock (_lock)
             {
                 if (!_sinkWriter.IsValueCreated)
@@ -554,11 +520,14 @@ namespace Duplicator
                     _sinkWriter.Value.Finalize();
                     _videoSamplesCount = 0;
                 }
+
                 _audioSamplesCount = 0;
+                _sink = Reset(_sink, CreateMediaSink);
                 _sinkWriter = Reset(_sinkWriter, CreateSinkWriter);
                 _devManager = Reset(_devManager, CreateDeviceManager);
                 _watch.Stop();
-                _lastNs = 0;
+                _lastVideoWatch = 0;
+                _lastAudioWatch = 0;
                 _videoOutputIndex = 0;
                 _audioOutputIndex = 0;
                 OnPropertyChanged(nameof(IsRecording));
@@ -567,6 +536,7 @@ namespace Duplicator
 
         private void DisposeDuplication()
         {
+            // dispose could be called by other threads, so we need to protect this
             lock (_lock)
             {
                 _currentFrameRate = 0;
@@ -591,6 +561,7 @@ namespace Duplicator
             }
         }
 
+        // we need to handle some important properties change
         private void OnOptionsChanged(object sender, PropertyChangedEventArgs e)
         {
             switch (e.PropertyName)
@@ -652,7 +623,7 @@ namespace Duplicator
                     if (adapter == null)
                         return null;
 
-                    var flags = DeviceCreationFlags.BgraSupport;
+                    var flags = DeviceCreationFlags.BgraSupport; // for D2D cooperation
                     flags |= DeviceCreationFlags.VideoSupport;
 #if DEBUG
                     flags |= DeviceCreationFlags.Debug;
@@ -700,6 +671,8 @@ namespace Duplicator
 
         private Texture2D CreateFrameCopy()
         {
+            // this is meant for GPU to GPU operation for maximum performance, so CPU has no access to this
+            // we don't use KeyedMutex, it does not seem to be necessary here.
             var desc = new Texture2DDescription()
             {
                 CpuAccessFlags = CpuAccessFlags.None,
@@ -718,7 +691,6 @@ namespace Duplicator
         }
 
         private Brush CreateDiagsBrush() => new SolidColorBrush(_backBufferDc.Value, new RawColor4(1, 0, 0, 1));
-
         private TextFormat CreateDiagsTextFormat()
         {
             using (var fac = new SharpDX.DirectWrite.Factory1())
@@ -751,7 +723,7 @@ namespace Duplicator
 
         private SinkWriter CreateSinkWriter()
         {
-            MediaManager.Startup(); // this can be called more than one time
+            MediaManager.Startup(); // this is ok to be called more than once
 
             if (string.IsNullOrEmpty(RecordFilePath))
             {
@@ -808,7 +780,6 @@ namespace Duplicator
             using (var video = new MediaType())
             {
                 video.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-                //input.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Argb32);
                 video.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Rgb32);
                 video.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
                 video.Set(MediaTypeAttributeKeys.FrameRate, ((long)Options.RecordingFrameRate << 32) | 1);
@@ -841,15 +812,11 @@ namespace Duplicator
                 }
             }
 
+            // gather some information
             IsUsingBuiltinEncoder = H264Encoder.IsBuiltinEncoder(writer, _videoOutputIndex);
             IsUsingDirect3D11AwareEncoder = H264Encoder.IsDirect3D11AwareEncoder(writer, _videoOutputIndex);
             IsUsingHardwareBasedEncoder = H264Encoder.IsHardwareBasedEncoder(writer, _videoOutputIndex);
-            var info = H264Encoder.GetOutputStreamInfo(writer, _videoOutputIndex);
-
-            // hardware encoders has MFT_OUTPUT_STREAM_PROVIDES_SAMPLES defined
-            var infof = (MftOutputStreamInformationFlags)info.DwFlags;
             Trace("IsBuiltinEncoder: " + IsUsingBuiltinEncoder + " IsUsingDirect3D11AwareEncoder: " + IsUsingDirect3D11AwareEncoder + " IsUsingHardwareBasedEncoder: " + IsUsingHardwareBasedEncoder);
-            Trace("OutputStreamInfo flags: " + infof);
             OnPropertyChanged(nameof(IsUsingBuiltinEncoder));
             OnPropertyChanged(nameof(IsUsingDirect3D11AwareEncoder));
             OnPropertyChanged(nameof(IsUsingHardwareBasedEncoder));
@@ -864,6 +831,14 @@ namespace Duplicator
             }
             OnPropertyChanged(nameof(IsRecording));
             return writer;
+        }
+
+        private MediaSink CreateMediaSink()
+        {
+            // note: we can only call that *after* BeginWriting
+            const int MF_SINK_WRITER_MEDIASINK = -1;
+            _sinkWriter.Value.GetServiceForStream(MF_SINK_WRITER_MEDIASINK, Guid.Empty, typeof(MediaSink).GUID, out IntPtr sinkPtr);
+            return new MediaSink(sinkPtr);
         }
 
         // compute the shape of the pointer bitmap
@@ -915,6 +890,7 @@ namespace Duplicator
                     pitch = shapeInfo.Pitch;
                 }
 
+                // we need to handle alpha channel for the pointer
                 var bprops = new BitmapProperties();
                 bprops.PixelFormat = new PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Premultiplied);
                 _pointerBitmap = new Bitmap(_backBufferDc.Value, size, new DataPointer(pointerShapeBuffer, bufferSize), pitch, bprops);
