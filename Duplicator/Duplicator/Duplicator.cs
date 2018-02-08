@@ -229,7 +229,7 @@ namespace Duplicator
                 var elapsedNs = (10000000 * _watch.ElapsedTicks) / Stopwatch.Frequency;
                 try
                 {
-                    Trace("SendStreamTick : " + elapsedNs);
+                    //Trace("SendStreamTick : " + elapsedNs);
                     _sinkWriter.Value.SendStreamTick(_audioOutputIndex, elapsedNs);
                 }
                 catch (Exception e)
@@ -254,7 +254,7 @@ namespace Duplicator
                     if (_discontinuity)
                     {
                         _discontinuity = false;
-                        Trace("Set Discontinuity");
+                        //Trace("Set Discontinuity");
                         sample.Set(SampleAttributeKeys.Discontinuity, true);
                     }
 
