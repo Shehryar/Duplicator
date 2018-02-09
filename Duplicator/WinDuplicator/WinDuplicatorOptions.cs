@@ -160,7 +160,7 @@ namespace WinDuplicator
             }
 
             [DllImport("shell32")]
-            private static extern int SHCreateItemFromParsingName([MarshalAs(UnmanagedType.LPWStr)] string pszPath, IntPtr pbc, Guid riid, out IShellItem ppv);
+            private static extern int SHCreateItemFromParsingName([MarshalAs(UnmanagedType.LPWStr)] string pszPath, IntPtr pbc, [MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IShellItem ppv);
 
             [DllImport("user32")]
             private static extern IntPtr GetActiveWindow();
