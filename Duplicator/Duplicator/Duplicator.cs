@@ -280,7 +280,14 @@ namespace Duplicator
             {
                 _frame = null;
                 frame.Dispose();
-                od.ReleaseFrame();
+                try
+                {
+                    od.ReleaseFrame();
+                }
+                catch (Exception e)
+                {
+                    Trace("Error on release frame: " + e.Message);
+                }
             }
 
             SharpDX.DXGI.Resource resource = null;
