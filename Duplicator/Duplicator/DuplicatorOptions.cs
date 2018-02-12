@@ -40,6 +40,7 @@ namespace Duplicator
             EnableHardwareTransforms = true;
             EnableSoundRecording = true;
             AudioDevice = LoopbackAudioCapture.GetSpeakersDevice()?.FriendlyName;
+            UseRecordingQueue = false;
         }
 
         [DisplayName("File Format")]
@@ -51,6 +52,12 @@ namespace Duplicator
         [Category(RecordingCategory)]
         public virtual string OutputDirectoryPath { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
 
+        [DisplayName("Use Intermediate Queue")]
+        [Category(RecordingCategory)]
+        [DefaultValue(false)]
+        public virtual bool UseRecordingQueue { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [Browsable(false)] // not use
         [DisplayName("Frame Rate")]
         [Category(RecordingCategory)]
         [DefaultValue(60f)]

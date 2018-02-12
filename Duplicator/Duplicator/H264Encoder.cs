@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 using SharpDX.MediaFoundation;
 using SharpDX.Multimedia;
 
@@ -39,6 +41,14 @@ namespace Duplicator
             {
                 // do nothing
             }
+
+            using (var key = Registry.ClassesRoot.OpenSubKey(Path.Combine("CLSID", Clsid.ToString("B"), "InprocServer32")))
+            {
+                if (key != null)
+                {
+                    DllPath = key.GetValue(null) as string;
+                }
+            }
         }
 
         public Activate Activate { get; }
@@ -49,6 +59,7 @@ namespace Duplicator
         public bool IsBuiltin { get; }
         public bool IsDirect3D11Aware { get; }
         public bool IsHardwareBased { get; }
+        public string DllPath { get; }
         public override string ToString() => FriendlyName;
 
         public Transform GetTransform() => Activate.ActivateObject<Transform>();
@@ -72,7 +83,7 @@ namespace Duplicator
             return tf;
         }
 
-        private static Transform GetTransform(SinkWriter writer, int streamIndex)
+        public static Transform GetTransform(SinkWriter writer, int streamIndex)
         {
             var ptr = GetTransformPtr(writer, streamIndex);
             return ptr != IntPtr.Zero ? new Transform(ptr) : null;

@@ -50,14 +50,14 @@
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 50F));
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 30F));
-            this.tableLayoutPanelMain.Size = new System.Drawing.Size(407, 308);
+            this.tableLayoutPanelMain.Size = new System.Drawing.Size(607, 308);
             this.tableLayoutPanelMain.TabIndex = 0;
             // 
             // buttonOk
             // 
             this.buttonOk.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.buttonOk.DialogResult = System.Windows.Forms.DialogResult.OK;
-            this.buttonOk.Location = new System.Drawing.Point(329, 281);
+            this.buttonOk.Location = new System.Drawing.Point(529, 281);
             this.buttonOk.Name = "buttonOk";
             this.buttonOk.Size = new System.Drawing.Size(75, 23);
             this.buttonOk.TabIndex = 0;
@@ -73,7 +73,7 @@
             this.labelCopyright.AutoSize = true;
             this.labelCopyright.Location = new System.Drawing.Point(3, 0);
             this.labelCopyright.Name = "labelCopyright";
-            this.labelCopyright.Size = new System.Drawing.Size(401, 50);
+            this.labelCopyright.Size = new System.Drawing.Size(601, 50);
             this.labelCopyright.TabIndex = 1;
             this.labelCopyright.Text = "Copyright";
             this.labelCopyright.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
@@ -88,7 +88,7 @@
             this.textBoxInfo.Name = "textBoxInfo";
             this.textBoxInfo.ReadOnly = true;
             this.textBoxInfo.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.textBoxInfo.Size = new System.Drawing.Size(401, 222);
+            this.textBoxInfo.Size = new System.Drawing.Size(601, 222);
             this.textBoxInfo.TabIndex = 2;
             // 
             // About
@@ -97,7 +97,7 @@
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.CancelButton = this.buttonOk;
-            this.ClientSize = new System.Drawing.Size(407, 308);
+            this.ClientSize = new System.Drawing.Size(607, 308);
             this.Controls.Add(this.tableLayoutPanelMain);
             this.MaximizeBox = false;
             this.MinimizeBox = false;

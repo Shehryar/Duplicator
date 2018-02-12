@@ -12,7 +12,6 @@ namespace WinDuplicator
         private static Lazy<Icon> _embeddedIcon = new Lazy<Icon>(() => { using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(typeof(Main), "Duplicator.ico")) return new Icon(stream); });
         public static Icon EmbeddedIcon => _embeddedIcon.Value;
 
-        private IContainer _components;
         private WinDuplicatorOptions _options;
         private Duplicator.Duplicator _duplicator;
 
@@ -81,7 +80,6 @@ namespace WinDuplicator
         {
             if (disposing)
             {
-                _components?.Dispose();
                 _duplicator?.Dispose();
             }
             base.Dispose(disposing);

@@ -21,14 +21,16 @@ namespace WinDuplicator
             sb.AppendLine();
             sb.AppendLine(" OS: " + Environment.OSVersion);
             sb.AppendLine(" Processors: " + Environment.ProcessorCount);
+            sb.AppendLine(" Bitness: " + (Environment.Is64BitProcess ? "64" : "32") + "-bit");
             sb.AppendLine();
             sb.AppendLine("* Detected H264 encoders:");
             sb.AppendLine();
             foreach (var dec in H264Encoder.Enumerate())
             {
                 sb.AppendLine(" " + dec.FriendlyName);
-                sb.AppendLine("  Clsid: " + dec.Clsid);
-                sb.AppendLine("  Flags: " + dec.Flags);
+                sb.AppendLine("  Clsid      : " + dec.Clsid);
+                sb.AppendLine("  DllPath    : " + dec.DllPath);
+                sb.AppendLine("  Flags      : " + dec.Flags);
                 sb.AppendLine("  D3D11 Aware: " + dec.IsDirect3D11Aware);
                 sb.AppendLine("  Supported Input types:");
                 foreach (var type in dec.InputTypes)

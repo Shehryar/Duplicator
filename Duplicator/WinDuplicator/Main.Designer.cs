@@ -36,8 +36,8 @@
             // splitContainerMain.Panel2
             // 
             this.splitContainerMain.Panel2.Controls.Add(this.tableLayoutPanelMain);
-            this.splitContainerMain.Size = new System.Drawing.Size(685, 384);
-            this.splitContainerMain.SplitterDistance = 334;
+            this.splitContainerMain.Size = new System.Drawing.Size(806, 422);
+            this.splitContainerMain.SplitterDistance = 455;
             this.splitContainerMain.TabIndex = 0;
             // 
             // tableLayoutPanelMain
@@ -53,7 +53,7 @@
             this.tableLayoutPanelMain.RowCount = 2;
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 30F));
-            this.tableLayoutPanelMain.Size = new System.Drawing.Size(345, 382);
+            this.tableLayoutPanelMain.Size = new System.Drawing.Size(345, 420);
             this.tableLayoutPanelMain.TabIndex = 0;
             // 
             // panelCommands
@@ -63,7 +63,7 @@
             this.panelCommands.Controls.Add(this.checkBoxDuplicate);
             this.panelCommands.Controls.Add(this.buttonQuit);
             this.panelCommands.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.panelCommands.Location = new System.Drawing.Point(0, 352);
+            this.panelCommands.Location = new System.Drawing.Point(0, 390);
             this.panelCommands.Margin = new System.Windows.Forms.Padding(0);
             this.panelCommands.Name = "panelCommands";
             this.panelCommands.Size = new System.Drawing.Size(345, 30);
@@ -123,7 +123,7 @@
             this.propertyGridMain.HelpVisible = false;
             this.propertyGridMain.Location = new System.Drawing.Point(3, 3);
             this.propertyGridMain.Name = "propertyGridMain";
-            this.propertyGridMain.Size = new System.Drawing.Size(339, 346);
+            this.propertyGridMain.Size = new System.Drawing.Size(339, 384);
             this.propertyGridMain.TabIndex = 0;
             this.propertyGridMain.ToolbarVisible = false;
             // 
@@ -131,7 +131,7 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(685, 384);
+            this.ClientSize = new System.Drawing.Size(806, 422);
             this.Controls.Add(this.splitContainerMain);
             this.Name = "Main";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
