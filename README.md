@@ -7,5 +7,5 @@ Key points are:
 * Uses Desktop Duplication API for desktop duplication. It uses almost zero CPU and zero RAM.
 * Uses an integrated custom optimized interop layer (over Windows Core Audio) for sound capture.
 * Uses H264 + AAC for recording format.
-* Uses few resources for H264 encoding when a hardware encoder is available (Intel, etc.).
+* Uses few resources for H264 encoding when a hardware encoder is available (Intel, etc.). In fact software recording is broken right now.
 * Never uses GDI nor GDI+ or legacy techology.
