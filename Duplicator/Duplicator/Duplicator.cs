@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading;
 using SharpDX;
 using SharpDX.Direct2D1;
+using SharpDX.Direct3D;
 using SharpDX.Direct3D11;
 using SharpDX.DirectWrite;
 using SharpDX.DXGI;
@@ -33,6 +34,7 @@ namespace Duplicator
         private ConcurrentQueue<TraceEvent> _events = new ConcurrentQueue<TraceEvent>();
 
         // recording common
+        private Thread _recordingThread;
         private bool _recording;
         private Lazy<SinkWriter> _sinkWriter;
         private long _startTime;
@@ -42,7 +44,6 @@ namespace Duplicator
         private AutoResetEvent _queuedVideoFrameEvent = new AutoResetEvent(false);
         private ConcurrentQueue<VideoFrame> _videoFramesQueue = new ConcurrentQueue<VideoFrame>();
         private Lazy<DXGIDeviceManager> _devManager;
-        private Thread _recordingThread;
         private int _videoOutputIndex;
         private long _videoElapsedNs;
 
@@ -64,11 +65,12 @@ namespace Duplicator
         private Lazy<Brush> _diagsBrush;
         private Lazy<Size2> _desktopSize;
         private int _resized;
+        private bool _acquired;
         private bool _duplicating;
         private Bitmap _pointerBitmap;
         private System.Threading.Timer _frameRateTimer;
         private Thread _duplicationThread;
-        private int _accumulatedFramesCount;
+        private int _currentAccumulatedFramesCount;
         private int _videoSamplesCount;
         private int _duplicationFrameNumber;
         private int _duplicationFrameRate;
@@ -77,7 +79,6 @@ namespace Duplicator
         private bool _pointerVisible;
         private int _pointerType;
         private Size2 _size;
-        private SharpDX.DXGI.Resource _frame;
 #if DEBUG
         private Lazy<DeviceDebug> _deviceDebug;
 #endif
@@ -242,7 +243,7 @@ namespace Duplicator
             }
         }
 
-        private bool WriteVideoSample(VideoFrame frame)
+        private void WriteVideoSample(VideoFrame frame)
         {
             using (frame.Texture)
             {
@@ -282,7 +283,6 @@ namespace Duplicator
                     }
                 }
             }
-            return true;
         }
 
         private void AudioCaptureDataReady(object sender, LoopbackAudioCaptureNativeDataEventArgs e)
@@ -344,43 +344,68 @@ namespace Duplicator
             }
         }
 
-        private bool TryGetFrame()
+        private void SafeAcquireFrame()
+        {
+            if (Debugger.IsAttached)
+            {
+                AcquireFrame();
+                return;
+            }
+
+            try
+            {
+                AcquireFrame();
+            }
+            catch (SharpDXException ex)
+            {
+                ReleaseTrace("TryGetFrame failed: " + ex);
+                // DXGI_ERROR_ACCESS_LOST
+                if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Code)
+                {
+                    DisposeDuplication();
+                    return;
+                }
+                throw;
+            }
+        }
+
+        private void AcquireFrame()
         {
             var od = _outputDuplication.Value; // can be null if adapter is not connected
             if (od == null)
-                return false;
+                return;
 
-            var frame = _frame;
-            if (frame != null)
+            SharpDX.DXGI.Resource frame;
+            OutputDuplicateFrameInformation frameInfo;
+
+            if (_acquired)
             {
-                _frame = null;
-                frame.Dispose();
-                if (Debugger.IsAttached)
-                {
-                    od.ReleaseFrame();
-                }
-                else
-                {
-                    try
-                    {
-                        od.ReleaseFrame();
-                    }
-                    catch (Exception e)
-                    {
-                        ReleaseTrace("ReleaseFrame failed:" + e.Message);
-                    }
-                }
+                od.ReleaseFrame();
+                _acquired = false;
             }
 
-            SharpDX.DXGI.Resource resource = null;
+            long ts = Stopwatch.GetTimestamp();
             try
             {
-                long ts = Stopwatch.GetTimestamp();
-                od.AcquireNextFrame(Options.FrameAcquisitionTimeout, out OutputDuplicateFrameInformation frameInfo, out resource);
+                od.AcquireNextFrame(Options.FrameAcquisitionTimeout, out frameInfo, out frame);
+                _acquired = true;
+            }
+            catch (SharpDXException ex)
+            {
+                Trace("DXGI_ERROR_WAIT_TIMEOUT");
+                // DXGI_ERROR_WAIT_TIMEOUT
+                if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.WaitTimeout.Result.Code)
+                    return;
+
+                throw;
+            }
+
+            using (frame)
+            {
                 long ms = ((Stopwatch.GetTimestamp() - ts) * 1000) / Stopwatch.Frequency;
                 _duplicationFrameNumber++;
-                _accumulatedFramesCount = frameInfo.AccumulatedFrames;
-                Trace("lpt:" + frameInfo.LastPresentTime + " ac:" + _accumulatedFramesCount + " fps:" + _duplicationFrameRate + " wait:" + ms + "ms");
+                _currentAccumulatedFramesCount = frameInfo.AccumulatedFrames;
+                Trace("lpt:" + frameInfo.LastPresentTime + " ac:" + _currentAccumulatedFramesCount + " fps:" + _duplicationFrameRate + " wait:" + ms + "ms");
 
                 if (frameInfo.LastMouseUpdateTime != 0)
                 {
@@ -390,6 +415,15 @@ namespace Duplicator
                     {
                         ComputePointerBitmap(ref frameInfo);
                     }
+                }
+
+                if (!IsDuplicating)
+                {
+                    ClearDuplicatedFrame();
+                }
+                else
+                {
+                    RenderDuplicatedFrame(frame);
                 }
 
                 if (IsRecording && frameInfo.LastPresentTime != 0)
@@ -407,8 +441,8 @@ namespace Duplicator
                     vf.Time = _videoElapsedNs;
                     vf.Duration = elapsedNs - _videoElapsedNs;
                     _videoElapsedNs = elapsedNs;
-                    vf.Texture = CreateFrameCopy();
-                    using (var res = resource.QueryInterface<SharpDX.Direct3D11.Resource>())
+                    vf.Texture = CreateTexture2D();
+                    using (var res = frame.QueryInterface<SharpDX.Direct3D11.Resource>())
                     {
                         _device.Value.ImmediateContext.CopyResource(res, vf.Texture);
                     }
@@ -424,26 +458,11 @@ namespace Duplicator
                         WriteVideoSample(vf);
                     }
                 }
-            }
-            catch (SharpDXException ex)
-            {
-                ReleaseTrace("TryGetFrame failed: " + ex);
-                // DXGI_ERROR_WAIT_TIMEOUT
-                if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.WaitTimeout.Result.Code)
-                    return true;
-
-                // DXGI_ERROR_ACCESS_LOST
-                if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Code)
+                else if (!IsRecording)
                 {
-                    DisposeDuplication();
-                    return false;
+                    DisposeRecording();
                 }
-
-                throw;
             }
-
-            _frame = resource;
-            return true;
         }
 
         private void DuplicationThreadFunc()
@@ -475,34 +494,15 @@ namespace Duplicator
                     }
                 }
 
-                if (TryGetFrame())
-                {
-                    if (!IsDuplicating)
-                    {
-                        ClearDuplicatedFrame();
-                        continue;
-                    }
-
-                    RenderDuplicatedFrame();
-                }
+                SafeAcquireFrame();
             }
             while (true);
         }
 
-        private void OnPropertyChanged(string name, string traceValue)
-        {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-            Trace("Name " + name + " value:" + traceValue);
-        }
-
         // How to render by using a Direct2D device context
         // https://msdn.microsoft.com/en-us/library/windows/desktop/hh780339.aspx
-        private void RenderDuplicatedFrame()
+        private void RenderDuplicatedFrame(SharpDX.DXGI.Resource frame)
         {
-            var frame = _frame;
-            if (frame == null)
-                return;
-
             //Trace("SW:" + _swapChain.Value.Description1.Width + "x" + _swapChain.Value.Description1.Height + " rs:" + RenderSize.Width + "x" + RenderSize.Height);
             _backBufferDc.Value.BeginDraw();
             _backBufferDc.Value.Clear(new RawColor4(0, 0, 0, 1));
@@ -529,7 +529,7 @@ namespace Duplicator
 
                         if (Options.ShowAccumulatedFrames)
                         {
-                            diags.Add(_accumulatedFramesCount + " af");
+                            diags.Add(_currentAccumulatedFramesCount + " af");
                         }
 
                         // draw the pointer if visible and if we have it
@@ -629,18 +629,17 @@ namespace Duplicator
             DisposeDuplication();
 #if DEBUG
             DXGIReportLiveObjects();
-            DumpTraceEvents();
 #endif
         }
 
         private void DisposeRecording()
         {
+            if (!_sinkWriter.IsValueCreated)
+                return;
+
             // dispose could be called by other threads, so we need to protect this
             lock (_lock)
             {
-                if (!_sinkWriter.IsValueCreated)
-                    return;
-
                 DrainRecordingVideoQueue();
                 _audioCapture.Stop();
 
@@ -659,6 +658,9 @@ namespace Duplicator
                 _audioElapsedNs = 0;
                 _videoOutputIndex = 0;
                 _audioOutputIndex = 0;
+                DumpTraceEvents();
+                RecordFilePath = null;
+                OnPropertyChanged(nameof(RecordFilePath), RecordFilePath);
             }
         }
 
@@ -673,7 +675,6 @@ namespace Duplicator
                 _pointerBitmap = Dispose(_pointerBitmap);
                 _diagsTextFormat = Reset(_diagsTextFormat, CreateDiagsTextFormat);
                 _diagsBrush = Reset(_diagsBrush, CreateDiagsBrush);
-                _frame = Dispose(_frame);
                 _output = Reset(_output, CreateOutput);
                 _outputDuplication = Reset(_outputDuplication, CreateOutputDuplication);
 #if DEBUG
@@ -688,6 +689,12 @@ namespace Duplicator
             }
         }
 
+        private void OnPropertyChanged(string name, string traceValue)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+            Trace("Name " + name + " value:" + traceValue);
+        }
+
         // we need to handle some important properties change
         private void OnOptionsChanged(object sender, PropertyChangedEventArgs e)
         {
@@ -695,16 +702,7 @@ namespace Duplicator
             {
                 case nameof(DuplicatorOptions.Adapter):
                 case nameof(DuplicatorOptions.Output):
-                    var duplicating = IsDuplicating;
-                    if (!duplicating)
-                    {
-                        DisposeRecording();
-                        DisposeDuplication();
-                        break;
-                    }
-
                     IsDuplicating = false;
-                    IsDuplicating = duplicating;
                     break;
 
                 case nameof(DuplicatorOptions.PreserveRatio):
@@ -755,7 +753,12 @@ namespace Duplicator
 #if DEBUG
                     flags |= DeviceCreationFlags.Debug;
 #endif
-                    return new SharpDX.Direct3D11.Device(adapter, flags);
+                    var device = new SharpDX.Direct3D11.Device(adapter, flags);
+                    using (var mt = device.QueryInterface<DeviceMultithread>())
+                    {
+                        mt.SetMultithreadProtected(new RawBool(true));
+                    }
+                    return device;
                 }
             }
         }
@@ -796,10 +799,9 @@ namespace Duplicator
 
         private Output1 CreateOutput() => Options.GetOutput();
 
-        private Texture2D CreateFrameCopy()
+        private Texture2D CreateTexture2D()
         {
             // this is meant for GPU to GPU operation for maximum performance, so CPU has no access to this
-            // we don't use KeyedMutex, it does not seem to be necessary here.
             var desc = new Texture2DDescription()
             {
                 CpuAccessFlags = CpuAccessFlags.None,
@@ -811,7 +813,7 @@ namespace Duplicator
                 MipLevels = 1,
                 ArraySize = 1,
                 SampleDescription = { Count = 1, Quality = 0 },
-                Usage = ResourceUsage.Default
+                Usage = ResourceUsage.Default,
             };
 
             return new Texture2D(_device.Value, desc);
@@ -907,9 +909,12 @@ namespace Duplicator
                 videoStream.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 videoStream.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
                 videoStream.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
-                //videoStream.Set(MediaTypeAttributeKeys.FrameRate, ((long)frameRateNumerator << 32) | (uint)frameRateDenominator);
+
+                if (!Options.EnableHardwareTransforms)
+                {
+                    videoStream.Set(MediaTypeAttributeKeys.FrameRate, ((long)frameRateNumerator << 32) | (uint)frameRateDenominator);
+                }
                 videoStream.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
-                videoStream.Set(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode.eAVEncCommonRateControlMode_Quality);
                 writer.AddStream(videoStream, out _videoOutputIndex);
                 Trace("Added Video Stream index:" + _videoOutputIndex);
             }
@@ -919,20 +924,42 @@ namespace Duplicator
                 video.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 video.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Rgb32);
                 video.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
-                //video.Set(MediaTypeAttributeKeys.FrameRate, ((long)frameRateNumerator << 32) | (uint)frameRateDenominator);
+                if (!Options.EnableHardwareTransforms)
+                {
+                    video.Set(MediaTypeAttributeKeys.FrameRate, ((long)frameRateNumerator << 32) | (uint)frameRateDenominator);
+                }
+
                 Trace("Add Video Input Media Type");
+
+                // https://msdn.microsoft.com/en-us/library/windows/desktop/dd206739.aspx
+                //using (var encodingParameters = new MediaAttributes())
+                //{
+                //    using (var ps = new PropertyStore())
+                //    {
+                //        ps.SetValue(MFPKEY_VBRENABLED, true);
+                //        ps.SetValue(MFPKEY_DESIRED_VBRQUALITY, 50);
+                //        encodingParameters.Set(SinkWriterAttributeKeys.EncoderConfig, ps);
+                //    }
+
+                //    writer.SetInputMediaType(_videoOutputIndex, video, encodingParameters);
+                //}
+
                 writer.SetInputMediaType(_videoOutputIndex, video, null);
             }
 
-            writer.GetServiceForStream(_videoOutputIndex, Guid.Empty, typeof(ICodecAPI).GUID, out IntPtr capiPtr);
-            var capi = Marshal.GetObjectForIUnknown(capiPtr) as ICodecAPI;
-            try
-            {
-            }
-            finally
-            {
-                Marshal.ReleaseComObject(capi);
-            }
+            // https://msdn.microsoft.com/en-us/library/windows/desktop/dd797816.aspx
+            //writer.GetServiceForStream(_videoOutputIndex, Guid.Empty, typeof(ICodecAPI).GUID, out IntPtr capiPtr);
+            //using (var capi = new CodecApi(capiPtr))
+            //{
+            //    var br = (uint)capi.GetValue(CODECAPI_AVEncCommonMeanBitRate);
+            //    var mode = (eAVEncCommonRateControlMode)(uint)capi.GetValue(CODECAPI_AVEncCommonRateControlMode);
+            //    capi.SetValue(CODECAPI_AVEncCommonRateControlMode, (uint)(int)eAVEncCommonRateControlMode.eAVEncCommonRateControlMode_Quality);
+            //    mode = (eAVEncCommonRateControlMode)(uint)capi.GetValue(CODECAPI_AVEncCommonRateControlMode);
+
+            //    var quality = (uint)capi.GetValue(CODECAPI_AVEncCommonQuality);
+            //    capi.SetValue(CODECAPI_AVEncCommonQuality, (uint)10);
+            //    capi.SetValue(CODECAPI_AVEncAdaptiveMode, (uint)eAVEncAdaptiveMode.eAVEncAdaptiveMode_FrameRate);
+            //}
 
             if (Options.EnableSoundRecording)
             {
@@ -980,6 +1007,7 @@ namespace Duplicator
                 var ad = Options.GetAudioDevice() ?? LoopbackAudioCapture.GetSpeakersDevice();
                 _audioCapture.Start(ad);
             }
+            OnPropertyChanged(nameof(RecordFilePath), RecordFilePath);
             return writer;
         }
 
@@ -1134,15 +1162,20 @@ namespace Duplicator
             evt.Text = text;
             evt.DupFps = _duplicationFrameRate;
             evt.Queued = _videoFramesQueue.Count;
+            evt.AccumulatedFrames = _currentAccumulatedFramesCount;
             _events.Enqueue(evt);
         }
 
         private void DumpTraceEvents()
         {
             if (RecordFilePath == null)
+            {
+                _events = new ConcurrentQueue<TraceEvent>();
                 return;
+            }
 
             var events = _events.ToList();
+            _events = new ConcurrentQueue<TraceEvent>();
             events.Sort();
 
             string path = Path.ChangeExtension(RecordFilePath, ".csv");
@@ -1150,7 +1183,7 @@ namespace Duplicator
             // note: unicode encoding + tabs as separator ensure Excel opens this with columns already set
             using (var writer = new StreamWriter(path, false, Encoding.Unicode))
             {
-                writer.WriteLine("Type\tTimeMs\tDurationMs\tDupFps\tQueued\tText");
+                writer.WriteLine("Type\tTimeMs\tDurationMs\tDupFps\tQueued\tAccFrames\tText");
                 foreach (var evt in events)
                 {
                     writer.Write(evt.Type.ToString());
@@ -1166,6 +1199,9 @@ namespace Duplicator
                     writer.Write('\t');
 
                     writer.Write(evt.Queued.ToString());
+                    writer.Write('\t');
+
+                    writer.Write(evt.AccumulatedFrames.ToString());
                     writer.Write('\t');
 
                     if (evt.Text != null)
@@ -1193,6 +1229,7 @@ namespace Duplicator
             public long DurationMs;
             public int DupFps;
             public int Queued;
+            public int AccumulatedFrames;
             public string Text;
 
             public int CompareTo(TraceEvent other) => TimeMs.CompareTo(other.TimeMs);
@@ -1216,8 +1253,45 @@ namespace Duplicator
             eAVEncCommonRateControlMode_GlobalLowDelayVBR = 6
         };
 
+        private enum MEDIASINK_CHARACTERISTICS
+        {
+            MEDIASINK_FIXED_STREAMS = 0x00000001,
+            MEDIASINK_CANNOT_MATCH_CLOCK = 0x00000002,
+            MEDIASINK_RATELESS = 0x00000004,
+            MEDIASINK_CLOCK_REQUIRED = 0x00000008,
+            MEDIASINK_CAN_PREROLL = 0x00000010,
+            MEDIASINK_REQUIRE_REFERENCE_MEDIATYPE = 0x00000020,
+        }
+
+        private class CodecApi : ComObject
+        {
+            private ICodecAPI _api;
+
+            public CodecApi(IntPtr ptr)
+                : base(ptr)
+            {
+                _api = (ICodecAPI)Marshal.GetObjectForIUnknown(NativePointer);
+            }
+
+            public void SetValue(Guid api, object value) => _api.SetValue(api, ref value);
+
+            public object GetValue(Guid api)
+            {
+                int hr = _api.GetValue(api, out object value);
+                if (hr != 0)
+                    throw new Win32Exception(hr);
+
+                return value;
+            }
+
+            public bool TryGetValue(Guid api, out object value) => _api.GetValue(api, out value) == 0;
+        }
+
+        //private static readonly Guid CLSID_EnhancedVideoRenderer = new Guid("fa10746c-9b63-4b6c-bc49-fc300ea5f256");
         private static readonly Guid CODECAPI_AVEncCommonRateControlMode = new Guid("1c0608e9-370c-4710-8a58-cb6181c42423");
         private static readonly Guid CODECAPI_AVEncAdaptiveMode = new Guid("4419b185-da1f-4f53-bc76-097d0c1efb1e");
+        private static readonly Guid CODECAPI_AVEncCommonQuality = new Guid("fcbf57a3-7ea5-4b0c-9644-69b40c39c391");
+        private static readonly Guid CODECAPI_AVEncCommonMeanBitRate = new Guid("f7222374-2144-4815-b550-a37f8e12ee52");
 
         [Guid("901db4c7-31ce-41a2-85dc-8fa0bf41b8da"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface ICodecAPI
@@ -1235,11 +1309,242 @@ namespace Duplicator
             int GetParameterValues([MarshalAs(UnmanagedType.LPStruct)] Guid Api, out IntPtr Values, out int ValuesCount);
 
             object GetDefaultValue([MarshalAs(UnmanagedType.LPStruct)] Guid Api);
-            object GetValue([MarshalAs(UnmanagedType.LPStruct)] Guid Api);
 
             [PreserveSig]
-            int SetValue([MarshalAs(UnmanagedType.LPStruct)] Guid Api, [In] ref object Value);
+            int GetValue([MarshalAs(UnmanagedType.LPStruct)] Guid Api, out object Value);
+
+            void SetValue([MarshalAs(UnmanagedType.LPStruct)] Guid Api, [In] ref object Value);
             // other undefined
+        }
+
+        // VT_BOOL 
+        private static readonly PROPERTYKEY MFPKEY_VBRENABLED = new PROPERTYKEY { fmtid = new Guid("e48d9459-6abe-4eb5-9211-60080c1ab984"), pid = 20 };
+
+        // VT_I4
+        private static readonly PROPERTYKEY MFPKEY_VBRQUALITY = new PROPERTYKEY { fmtid = new Guid("f97b3f3a-9eff-4ac9-8247-35b30eb925f4"), pid = 21 };
+
+        // VT_UI4
+        private static readonly PROPERTYKEY MFPKEY_DESIRED_VBRQUALITY = new PROPERTYKEY { fmtid = new Guid("6dbdf03b-b05c-4a03-8ec1-bbe63db10cb4"), pid = 25 };
+
+        // VT_I4
+        private static readonly PROPERTYKEY MFPKEY_PASSESUSED = new PROPERTYKEY { fmtid = new Guid("b1653ac1-cb7d-43ee-8454-3f9d811b0331"), pid = 19 };
+
+        // VT_I4
+        private static readonly PROPERTYKEY MFPKEY_RMAX = new PROPERTYKEY { fmtid = new Guid("7d8dd246-aaf4-4a24-8166-19396b06ef69"), pid = 24 };
+
+        // VT_I4
+        private static readonly PROPERTYKEY MFPKEY_BMAX = new PROPERTYKEY { fmtid = new Guid("ff365211-21b6-4134-ab7c-52393a8f80f6"), pid = 25 };
+
+        private class PropertyStore : ComObject
+        {
+            private IPropertyStore _store;
+
+            public PropertyStore()
+                : base(CreateMemoryPropertyStore())
+            {
+                _store = (IPropertyStore)Marshal.GetObjectForIUnknown(NativePointer);
+            }
+
+            public int Count => _store.GetCount();
+
+            public int GetInt32Value(PROPERTYKEY key)
+            {
+                var pv = new PROPVARIANT();
+                _store.GetValue(ref key, ref pv);
+                return pv._int32;
+            }
+
+            public uint GetUInt32Value(PROPERTYKEY key)
+            {
+                var pv = new PROPVARIANT();
+                _store.GetValue(ref key, ref pv);
+                return pv._uint32;
+            }
+
+            public bool GetBooleanValue(PROPERTYKEY key)
+            {
+                var pv = new PROPVARIANT();
+                _store.GetValue(ref key, ref pv);
+                return pv._boolean != 0;
+            }
+
+            public void SetValue(PROPERTYKEY key, int value)
+            {
+                var pv = new PROPVARIANT();
+                pv._vt = PropertyType.VT_I4;
+                pv._int32 = value;
+                _store.SetValue(ref key, ref pv);
+            }
+
+            public void SetValue(PROPERTYKEY key, uint value)
+            {
+                var pv = new PROPVARIANT();
+                pv._vt = PropertyType.VT_UI4;
+                pv._uint32 = value;
+                _store.SetValue(ref key, ref pv);
+            }
+
+            public void SetValue(PROPERTYKEY key, bool value)
+            {
+                var pv = new PROPVARIANT();
+                pv._vt = PropertyType.VT_BOOL;
+                pv._boolean = (short)(value ? -1 : 0);
+                _store.SetValue(ref key, ref pv);
+            }
+
+            private static IntPtr CreateMemoryPropertyStore()
+            {
+                int hr = PSCreateMemoryPropertyStore(typeof(IPropertyStore).GUID, out IntPtr store);
+                if (hr != 0)
+                    throw new Win32Exception(hr);
+
+                return store;
+            }
+
+            [Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+            private interface IPropertyStore
+            {
+                int GetCount();
+
+                [PreserveSig]
+                int GetAt(int iProp, out PROPERTYKEY pkey);
+
+                [PreserveSig]
+                int GetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
+
+                [PreserveSig]
+                int SetValue(ref PROPERTYKEY key, [In] ref PROPVARIANT propvar);
+
+                void Commit();
+            }
+
+            // stupid .NET's VarEnum does not define Flags and does not derive from ushort ...
+            [Flags]
+            private enum PropertyType : ushort
+            {
+                VT_EMPTY = 0,
+                VT_NULL = 1,
+                VT_I2 = 2,
+                VT_I4 = 3,
+                VT_R4 = 4,
+                VT_R8 = 5,
+                VT_CY = 6,
+                VT_DATE = 7,
+                VT_BSTR = 8,
+                VT_DISPATCH = 9,
+                VT_ERROR = 10,
+                VT_BOOL = 11,
+                VT_VARIANT = 12,
+                VT_UNKNOWN = 13,
+                VT_DECIMAL = 14,
+                VT_I1 = 16,
+                VT_UI1 = 17,
+                VT_UI2 = 18,
+                VT_UI4 = 19,
+                VT_I8 = 20,
+                VT_UI8 = 21,
+                VT_INT = 22,
+                VT_UINT = 23,
+                VT_VOID = 24,
+                VT_HRESULT = 25,
+                VT_PTR = 26,
+                VT_SAFEARRAY = 27,
+                VT_CARRAY = 28,
+                VT_USERDEFINED = 29,
+                VT_LPSTR = 30,
+                VT_LPWSTR = 31,
+                VT_RECORD = 36,
+                VT_INT_PTR = 37,
+                VT_UINT_PTR = 38,
+                VT_FILETIME = 64,
+                VT_BLOB = 65,
+                VT_STREAM = 66,
+                VT_STORAGE = 67,
+                VT_STREAMED_OBJECT = 68,
+                VT_STORED_OBJECT = 69,
+                VT_BLOB_OBJECT = 70,
+                VT_CF = 71,
+                VT_CLSID = 72,
+                VT_VERSIONED_STREAM = 73,
+                VT_BSTR_BLOB = 0xfff,
+                VT_VECTOR = 0x1000,
+                VT_ARRAY = 0x2000,
+                VT_BYREF = 0x4000,
+                VT_RESERVED = 0x8000,
+                VT_ILLEGAL = 0xffff,
+                VT_ILLEGALMASKED = 0xfff,
+                VT_TYPEMASK = 0xfff
+            }
+
+            [StructLayout(LayoutKind.Explicit)]
+            private struct PROPVARIANT
+            {
+                [FieldOffset(0)]
+                public PropertyType _vt;
+
+                [FieldOffset(8)]
+                public IntPtr _ptr;
+
+                [FieldOffset(8)]
+                public int _int32;
+
+                [FieldOffset(8)]
+                public uint _uint32;
+
+                [FieldOffset(8)]
+                public byte _byte;
+
+                [FieldOffset(8)]
+                public sbyte _sbyte;
+
+                [FieldOffset(8)]
+                public short _int16;
+
+                [FieldOffset(8)]
+                public ushort _uint16;
+
+                [FieldOffset(8)]
+                public long _int64;
+
+                [FieldOffset(8)]
+                public ulong _uint64;
+
+                [FieldOffset(8)]
+                public double _double;
+
+                [FieldOffset(8)]
+                public float _single;
+
+                [FieldOffset(8)]
+                public short _boolean;
+
+                [FieldOffset(8)]
+                public global::System.Runtime.InteropServices.ComTypes.FILETIME _filetime;
+
+                [FieldOffset(8)]
+                public PROPARRAY _ca;
+
+                [FieldOffset(0)]
+                public decimal _decimal;
+
+                [StructLayout(LayoutKind.Sequential)]
+                public struct PROPARRAY
+                {
+                    public int cElems;
+                    public IntPtr pElems;
+                }
+            }
+
+            [DllImport("propsys")]
+            private static extern int PSCreateMemoryPropertyStore([MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IntPtr ppv);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROPERTYKEY
+        {
+            public Guid fmtid;
+            public int pid;
+            public override string ToString() => fmtid.ToString("B") + " " + pid;
         }
 
 #if DEBUG

@@ -63,9 +63,16 @@ namespace WinDuplicator
                     BeginInvoke((Action)(() =>
                     {
                         checkBoxRecord.Checked = _duplicator.IsRecording;
+                    }));
+                    break;
+
+                case nameof(_duplicator.RecordFilePath):
+                    string mode = _duplicator.IsUsingHardwareBasedEncoder ? "Hardware" : "Software";
+                    BeginInvoke((Action)(() =>
+                    {
                         if (_duplicator.IsRecording && !string.IsNullOrEmpty(_duplicator.RecordFilePath))
                         {
-                            Text = "Duplicator - Recording " + Path.GetFileName(_duplicator.RecordFilePath);
+                            Text = "Duplicator - " + mode + " Recording " + Path.GetFileName(_duplicator.RecordFilePath);
                         }
                         else
                         {

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -10,8 +11,12 @@ namespace WinDuplicator
         static void Main()
         {
             SetErrorMode(ErrorModes.SEM_NONE);
-            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
-            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            if (!Debugger.IsAttached)
+            {
+                AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new Main());

@@ -148,6 +148,20 @@ namespace Duplicator
             return EnumerateAttributes(transform.Attributes).Any(a => a.Key == TransformAttributeKeys.D3D11Aware.Guid && a.Value.Equals(1));
         }
 
+        public static IReadOnlyDictionary<Guid, object> GetAttributes(MediaAttributes atts)
+        {
+            var dic = new Dictionary<Guid, object>();
+            if (atts != null)
+            {
+                for (int i = 0; i < atts.Count; i++)
+                {
+                    object value = atts.GetByIndex(i, out Guid guid);
+                    dic[guid] = value;
+                }
+            }
+            return dic;
+        }
+
         internal static IEnumerable<KeyValuePair<Guid, object>> EnumerateAttributes(MediaAttributes atts)
         {
             for (int i = 0; i < atts.Count; i++)

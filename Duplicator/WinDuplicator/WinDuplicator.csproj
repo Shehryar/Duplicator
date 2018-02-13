@@ -129,6 +129,9 @@
     </Content>
   </ItemGroup>
   <ItemGroup>
+    <None Include="trace64.bat">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="trace.bat">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
