@@ -18,6 +18,7 @@
             this.checkBoxDuplicate = new System.Windows.Forms.CheckBox();
             this.buttonQuit = new System.Windows.Forms.Button();
             this.propertyGridMain = new System.Windows.Forms.PropertyGrid();
+            this.textBoxStatus = new System.Windows.Forms.TextBox();
             ((System.ComponentModel.ISupportInitialize)(this.splitContainerMain)).BeginInit();
             this.splitContainerMain.Panel2.SuspendLayout();
             this.splitContainerMain.SuspendLayout();
@@ -36,7 +37,7 @@
             // splitContainerMain.Panel2
             // 
             this.splitContainerMain.Panel2.Controls.Add(this.tableLayoutPanelMain);
-            this.splitContainerMain.Size = new System.Drawing.Size(806, 422);
+            this.splitContainerMain.Size = new System.Drawing.Size(806, 463);
             this.splitContainerMain.SplitterDistance = 455;
             this.splitContainerMain.TabIndex = 0;
             // 
@@ -44,16 +45,17 @@
             // 
             this.tableLayoutPanelMain.ColumnCount = 1;
             this.tableLayoutPanelMain.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.tableLayoutPanelMain.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 20F));
-            this.tableLayoutPanelMain.Controls.Add(this.panelCommands, 0, 1);
+            this.tableLayoutPanelMain.Controls.Add(this.panelCommands, 0, 2);
             this.tableLayoutPanelMain.Controls.Add(this.propertyGridMain, 0, 0);
+            this.tableLayoutPanelMain.Controls.Add(this.textBoxStatus, 0, 1);
             this.tableLayoutPanelMain.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tableLayoutPanelMain.Location = new System.Drawing.Point(0, 0);
             this.tableLayoutPanelMain.Name = "tableLayoutPanelMain";
-            this.tableLayoutPanelMain.RowCount = 2;
+            this.tableLayoutPanelMain.RowCount = 3;
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 60F));
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 30F));
-            this.tableLayoutPanelMain.Size = new System.Drawing.Size(345, 420);
+            this.tableLayoutPanelMain.Size = new System.Drawing.Size(345, 461);
             this.tableLayoutPanelMain.TabIndex = 0;
             // 
             // panelCommands
@@ -63,11 +65,11 @@
             this.panelCommands.Controls.Add(this.checkBoxDuplicate);
             this.panelCommands.Controls.Add(this.buttonQuit);
             this.panelCommands.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.panelCommands.Location = new System.Drawing.Point(0, 390);
+            this.panelCommands.Location = new System.Drawing.Point(0, 431);
             this.panelCommands.Margin = new System.Windows.Forms.Padding(0);
             this.panelCommands.Name = "panelCommands";
             this.panelCommands.Size = new System.Drawing.Size(345, 30);
-            this.panelCommands.TabIndex = 1;
+            this.panelCommands.TabIndex = 2;
             // 
             // buttonAbout
             // 
@@ -84,7 +86,6 @@
             // 
             this.checkBoxRecord.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.checkBoxRecord.AutoSize = true;
-            this.checkBoxRecord.Enabled = false;
             this.checkBoxRecord.Location = new System.Drawing.Point(101, 8);
             this.checkBoxRecord.Name = "checkBoxRecord";
             this.checkBoxRecord.Size = new System.Drawing.Size(61, 17);
@@ -123,15 +124,26 @@
             this.propertyGridMain.HelpVisible = false;
             this.propertyGridMain.Location = new System.Drawing.Point(3, 3);
             this.propertyGridMain.Name = "propertyGridMain";
-            this.propertyGridMain.Size = new System.Drawing.Size(339, 384);
+            this.propertyGridMain.Size = new System.Drawing.Size(339, 365);
             this.propertyGridMain.TabIndex = 0;
             this.propertyGridMain.ToolbarVisible = false;
+            // 
+            // textBoxStatus
+            // 
+            this.textBoxStatus.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.textBoxStatus.Location = new System.Drawing.Point(3, 374);
+            this.textBoxStatus.Multiline = true;
+            this.textBoxStatus.Name = "textBoxStatus";
+            this.textBoxStatus.ReadOnly = true;
+            this.textBoxStatus.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+            this.textBoxStatus.Size = new System.Drawing.Size(339, 54);
+            this.textBoxStatus.TabIndex = 3;
             // 
             // Main
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(806, 422);
+            this.ClientSize = new System.Drawing.Size(806, 463);
             this.Controls.Add(this.splitContainerMain);
             this.Name = "Main";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
@@ -140,6 +152,7 @@
             ((System.ComponentModel.ISupportInitialize)(this.splitContainerMain)).EndInit();
             this.splitContainerMain.ResumeLayout(false);
             this.tableLayoutPanelMain.ResumeLayout(false);
+            this.tableLayoutPanelMain.PerformLayout();
             this.panelCommands.ResumeLayout(false);
             this.panelCommands.PerformLayout();
             this.ResumeLayout(false);
@@ -150,12 +163,13 @@
 
         private System.Windows.Forms.SplitContainer splitContainerMain;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanelMain;
-        private System.Windows.Forms.Panel panelCommands;
-        private System.Windows.Forms.Button buttonQuit;
         private System.Windows.Forms.PropertyGrid propertyGridMain;
-        private System.Windows.Forms.CheckBox checkBoxDuplicate;
-        private System.Windows.Forms.CheckBox checkBoxRecord;
+        private System.Windows.Forms.Panel panelCommands;
         private System.Windows.Forms.Button buttonAbout;
+        private System.Windows.Forms.CheckBox checkBoxRecord;
+        private System.Windows.Forms.CheckBox checkBoxDuplicate;
+        private System.Windows.Forms.Button buttonQuit;
+        private System.Windows.Forms.TextBox textBoxStatus;
     }
 }
 

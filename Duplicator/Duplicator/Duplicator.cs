@@ -30,12 +30,11 @@ namespace Duplicator
         private static EventProvider _provider = new EventProvider(new Guid("964D4572-ADB9-4F3A-8170-FCBECEC27465"));
 
         // common
-        private bool _stopping;
         private ConcurrentQueue<TraceEvent> _events = new ConcurrentQueue<TraceEvent>();
 
         // recording common
         private Thread _recordingThread;
-        private bool _recording;
+        private DuplicatorState _recordingState;
         private Lazy<SinkWriter> _sinkWriter;
         private long _startTime;
         private object _lock = new object();
@@ -66,7 +65,7 @@ namespace Duplicator
         private Lazy<Size2> _desktopSize;
         private int _resized;
         private bool _acquired;
-        private bool _duplicating;
+        private DuplicatorState _duplicatingState;
         private Bitmap _pointerBitmap;
         private System.Threading.Timer _frameRateTimer;
         private Thread _duplicationThread;
@@ -120,17 +119,6 @@ namespace Duplicator
             _swapChain = new Lazy<SwapChain1>(CreateSwapChain, true);
             _2D1Device = new Lazy<SharpDX.Direct2D1.Device>(Create2D1Device, true);
             _backBufferDc = new Lazy<SharpDX.Direct2D1.DeviceContext>(CreateBackBufferDc, true);
-
-            _duplicationThread = new Thread(DuplicationThreadFunc);
-            _duplicationThread.Name = "Duplication" + DateTime.Now.TimeOfDay;
-            _duplicationThread.IsBackground = true;
-            _duplicationThread.Start();
-
-            _recordingThread = new Thread(RecordingThreadFunc);
-            _recordingThread.Name = "Recording" + DateTime.Now.TimeOfDay;
-            _recordingThread.IsBackground = true;
-            _recordingThread.Priority = ThreadPriority.Lowest;
-            _recordingThread.Start();
         }
 
         public DuplicatorOptions Options { get; }
@@ -174,38 +162,93 @@ namespace Duplicator
             }
         }
 
-        public bool IsRecording
+        public DuplicatorState RecordingState
         {
-            get => _recording;
-            set
+            get => _recordingState;
+            private set
             {
-                if (_recording == value)
+                if (_recordingState == value)
                     return;
 
-                // can't record w/o duplication
-                if (value && !IsDuplicating)
-                    return;
-
-                _recording = value;
-                OnPropertyChanged(nameof(IsRecording), _recording.ToString());
+                _recordingState = value;
+                OnPropertyChanged(nameof(RecordingState), _recordingState.ToString());
             }
         }
 
-        public bool IsDuplicating
+        public DuplicatorState DuplicatingState
         {
-            get => _duplicating;
-            set
+            get => _duplicatingState;
+            private set
             {
-                if (_duplicating == value)
+                if (_duplicatingState == value)
                     return;
 
-                _duplicating = value;
-                OnPropertyChanged(nameof(IsDuplicating), _duplicating.ToString());
+                _duplicatingState = value;
+                OnPropertyChanged(nameof(DuplicatingState), _duplicatingState.ToString());
+            }
+        }
 
-                // can't record w/o duplication
-                if (!value)
+        public void StartDuplicating()
+        {
+            if (DuplicatingState == DuplicatorState.Starting || DuplicatingState == DuplicatorState.Started)
+                return;
+
+            DuplicatingState = DuplicatorState.Starting;
+            _duplicationThread = new Thread(DuplicationThreadFunc);
+            _duplicationThread.Name = "Duplication" + DateTime.Now.TimeOfDay;
+            _duplicationThread.IsBackground = true;
+            _duplicationThread.Start();
+        }
+
+        public void StopDuplicating()
+        {
+            if (DuplicatingState == DuplicatorState.Stopping || DuplicatingState == DuplicatorState.Stopped)
+                return;
+
+            DuplicatingState = DuplicatorState.Stopping;
+            StopRecording();
+
+            // wait for thread a bit longer than the main acquisition timeout
+            var t = _duplicationThread;
+            _duplicationThread = null;
+            if (t != null)
+            {
+                var result = t.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
+                if (!result)
                 {
-                    IsRecording = false;
+                    Trace("Duplication thread timed out");
+                }
+            }
+        }
+
+        public void StartRecording()
+        {
+            if (RecordingState == DuplicatorState.Starting || DuplicatingState == DuplicatorState.Started)
+                return;
+
+            StartDuplicating();
+            RecordingState = DuplicatorState.Starting;
+            _recordingThread = new Thread(RecordingThreadFunc);
+            _recordingThread.Name = "Recording" + DateTime.Now.TimeOfDay;
+            _recordingThread.IsBackground = true;
+            _recordingThread.Priority = ThreadPriority.Lowest;
+            _recordingThread.Start();
+        }
+
+        public void StopRecording()
+        {
+            if (RecordingState == DuplicatorState.Stopping || DuplicatingState == DuplicatorState.Stopped)
+                return;
+
+            RecordingState = DuplicatorState.Stopping;
+            var t = _recordingThread;
+            _recordingThread = null;
+            if (t != null)
+            {
+                var result = t.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
+                if (!result)
+                {
+                    Trace("Recording thread timed out");
                 }
             }
         }
@@ -221,8 +264,36 @@ namespace Duplicator
         {
             do
             {
-                if (_stopping)
-                    return;
+                switch (RecordingState)
+                {
+                    case DuplicatorState.Stopping:
+                        DrainRecordingVideoQueue();
+                        _audioCapture.Stop();
+
+                        if (_videoSamplesCount > 0)
+                        {
+                            Trace("SinkWriter Finalize video samples:" + _videoSamplesCount + " audio samples:" + _audioSamplesCount + " audio gaps:" + _audioGapsCount);
+                            _sinkWriter.Value.Finalize();
+                            _videoSamplesCount = 0;
+                        }
+
+                        _audioSamplesCount = 0;
+                        _sinkWriter = Reset(_sinkWriter, CreateSinkWriter);
+                        _devManager = Reset(_devManager, CreateDeviceManager);
+                        _startTime = 0;
+                        _videoElapsedNs = 0;
+                        _audioElapsedNs = 0;
+                        _videoOutputIndex = 0;
+                        _audioOutputIndex = 0;
+                        DumpTraceEvents();
+                        RecordFilePath = null;
+                        RecordingState = DuplicatorState.Stopped;
+                        return;
+
+                    case DuplicatorState.Starting:
+                        RecordingState = DuplicatorState.Started;
+                        break;
+                }
 
                 bool result = _queuedVideoFrameEvent.WaitOne(500);
                 Trace("result:" + result + " queued:" + _videoFramesQueue.Count);
@@ -362,7 +433,8 @@ namespace Duplicator
                 // DXGI_ERROR_ACCESS_LOST
                 if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Code)
                 {
-                    DisposeDuplication();
+                    _acquired = false;
+                    _outputDuplication = new Lazy<OutputDuplication>(CreateOutputDuplication, true);
                     return;
                 }
                 throw;
@@ -392,7 +464,8 @@ namespace Duplicator
             }
             catch (SharpDXException ex)
             {
-                Trace("DXGI_ERROR_WAIT_TIMEOUT");
+                long mse = ((Stopwatch.GetTimestamp() - ts) * 1000) / Stopwatch.Frequency;
+                Trace("DXGI_ERROR_WAIT_TIMEOUT ms:" + mse);
                 // DXGI_ERROR_WAIT_TIMEOUT
                 if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.WaitTimeout.Result.Code)
                     return;
@@ -400,9 +473,10 @@ namespace Duplicator
                 throw;
             }
 
+            long ms = ((Stopwatch.GetTimestamp() - ts) * 1000) / Stopwatch.Frequency;
+
             using (frame)
             {
-                long ms = ((Stopwatch.GetTimestamp() - ts) * 1000) / Stopwatch.Frequency;
                 _duplicationFrameNumber++;
                 _currentAccumulatedFramesCount = frameInfo.AccumulatedFrames;
                 Trace("lpt:" + frameInfo.LastPresentTime + " ac:" + _currentAccumulatedFramesCount + " fps:" + _duplicationFrameRate + " wait:" + ms + "ms");
@@ -417,16 +491,9 @@ namespace Duplicator
                     }
                 }
 
-                if (!IsDuplicating)
-                {
-                    ClearDuplicatedFrame();
-                }
-                else
-                {
-                    RenderDuplicatedFrame(frame);
-                }
+                RenderDuplicatedFrame(frame);
 
-                if (IsRecording && frameInfo.LastPresentTime != 0)
+                if (RecordingState == DuplicatorState.Started && frameInfo.LastPresentTime != 0)
                 {
                     if (_startTime == 0)
                     {
@@ -458,10 +525,6 @@ namespace Duplicator
                         WriteVideoSample(vf);
                     }
                 }
-                else if (!IsRecording)
-                {
-                    DisposeRecording();
-                }
             }
         }
 
@@ -469,8 +532,35 @@ namespace Duplicator
         {
             do
             {
-                if (_stopping)
-                    return;
+                switch (DuplicatingState)
+                {
+                    case DuplicatorState.Stopping:
+                        ClearDuplicatedFrame();
+                        _acquired = false;
+                        _duplicationFrameRate = 0;
+                        _duplicationFrameNumber = 0;
+                        _desktopSize = new Lazy<Size2>(CreateDesktopSize, true);
+                        _pointerBitmap = Dispose(_pointerBitmap);
+                        _diagsTextFormat = Reset(_diagsTextFormat, CreateDiagsTextFormat);
+                        _diagsBrush = Reset(_diagsBrush, CreateDiagsBrush);
+                        _output = Reset(_output, CreateOutput);
+                        _outputDuplication = Reset(_outputDuplication, CreateOutputDuplication);
+#if DEBUG
+                        _deviceDebug = Reset(_deviceDebug, CreateDeviceDebug);
+#endif
+
+                        _2D1Device = Reset(_2D1Device, Create2D1Device);
+                        _backBufferDc = Reset(_backBufferDc, CreateBackBufferDc);
+                        _swapChain = Reset(_swapChain, CreateSwapChain);
+
+                        _device = Reset(_device, CreateDevice);
+                        DuplicatingState = DuplicatorState.Stopped;
+                        return;
+
+                    case DuplicatorState.Starting:
+                        DuplicatingState = DuplicatorState.Started;
+                        break;
+                }
 
                 // handle host window resize
                 if (Interlocked.CompareExchange(ref _resized, 0, 1) == 1)
@@ -555,6 +645,9 @@ namespace Duplicator
 
         private void ClearDuplicatedFrame()
         {
+            if (!_backBufferDc.IsValueCreated)
+                return;
+
             _backBufferDc.Value.BeginDraw();
             _backBufferDc.Value.Clear(new RawColor4(0, 0, 0, 1));
             _backBufferDc.Value.EndDraw();
@@ -599,94 +692,12 @@ namespace Duplicator
 
         public void Dispose()
         {
-            _stopping = true;
             _frameRateTimer = Dispose(_frameRateTimer);
+            StopDuplicating(); // stop recording implicit
 
-            // wait for thread a bit longer than the main acquisition timeout
-            var t = _duplicationThread;
-            _duplicationThread = null;
-            if (t != null)
-            {
-                var result = t.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
-                if (!result)
-                {
-                    Trace("Duplication thread timed out");
-                }
-            }
-
-            t = _recordingThread;
-            _recordingThread = null;
-            if (t != null)
-            {
-                var result = t.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
-                if (!result)
-                {
-                    Trace("Recording thread timed out");
-                }
-            }
-
-            DisposeRecording();
-            DisposeDuplication();
 #if DEBUG
             DXGIReportLiveObjects();
 #endif
-        }
-
-        private void DisposeRecording()
-        {
-            if (!_sinkWriter.IsValueCreated)
-                return;
-
-            // dispose could be called by other threads, so we need to protect this
-            lock (_lock)
-            {
-                DrainRecordingVideoQueue();
-                _audioCapture.Stop();
-
-                if (_videoSamplesCount > 0)
-                {
-                    Trace("SinkWriter Finalize video samples:" + _videoSamplesCount + " audio samples:" + _audioSamplesCount + " audio gaps:" + _audioGapsCount);
-                    _sinkWriter.Value.Finalize();
-                    _videoSamplesCount = 0;
-                }
-
-                _audioSamplesCount = 0;
-                _sinkWriter = Reset(_sinkWriter, CreateSinkWriter);
-                _devManager = Reset(_devManager, CreateDeviceManager);
-                _startTime = 0;
-                _videoElapsedNs = 0;
-                _audioElapsedNs = 0;
-                _videoOutputIndex = 0;
-                _audioOutputIndex = 0;
-                DumpTraceEvents();
-                RecordFilePath = null;
-                OnPropertyChanged(nameof(RecordFilePath), RecordFilePath);
-            }
-        }
-
-        private void DisposeDuplication()
-        {
-            // dispose could be called by other threads, so we need to protect this
-            lock (_lock)
-            {
-                _duplicationFrameRate = 0;
-                _duplicationFrameNumber = 0;
-                _desktopSize = new Lazy<Size2>(CreateDesktopSize, true);
-                _pointerBitmap = Dispose(_pointerBitmap);
-                _diagsTextFormat = Reset(_diagsTextFormat, CreateDiagsTextFormat);
-                _diagsBrush = Reset(_diagsBrush, CreateDiagsBrush);
-                _output = Reset(_output, CreateOutput);
-                _outputDuplication = Reset(_outputDuplication, CreateOutputDuplication);
-#if DEBUG
-                _deviceDebug = Reset(_deviceDebug, CreateDeviceDebug);
-#endif
-
-                _2D1Device = Reset(_2D1Device, Create2D1Device);
-                _backBufferDc = Reset(_backBufferDc, CreateBackBufferDc);
-                _swapChain = Reset(_swapChain, CreateSwapChain);
-
-                _device = Reset(_device, CreateDevice);
-            }
         }
 
         private void OnPropertyChanged(string name, string traceValue)
@@ -702,7 +713,12 @@ namespace Duplicator
             {
                 case nameof(DuplicatorOptions.Adapter):
                 case nameof(DuplicatorOptions.Output):
-                    IsDuplicating = false;
+                    var restart = DuplicatingState == DuplicatorState.Starting || DuplicatingState == DuplicatorState.Started;
+                    StopDuplicating();
+                    if (restart)
+                    {
+                        StartDuplicating();
+                    }
                     break;
 
                 case nameof(DuplicatorOptions.PreserveRatio):
@@ -930,19 +946,6 @@ namespace Duplicator
                 }
 
                 Trace("Add Video Input Media Type");
-
-                // https://msdn.microsoft.com/en-us/library/windows/desktop/dd206739.aspx
-                //using (var encodingParameters = new MediaAttributes())
-                //{
-                //    using (var ps = new PropertyStore())
-                //    {
-                //        ps.SetValue(MFPKEY_VBRENABLED, true);
-                //        ps.SetValue(MFPKEY_DESIRED_VBRQUALITY, 50);
-                //        encodingParameters.Set(SinkWriterAttributeKeys.EncoderConfig, ps);
-                //    }
-
-                //    writer.SetInputMediaType(_videoOutputIndex, video, encodingParameters);
-                //}
 
                 writer.SetInputMediaType(_videoOutputIndex, video, null);
             }
@@ -1253,16 +1256,6 @@ namespace Duplicator
             eAVEncCommonRateControlMode_GlobalLowDelayVBR = 6
         };
 
-        private enum MEDIASINK_CHARACTERISTICS
-        {
-            MEDIASINK_FIXED_STREAMS = 0x00000001,
-            MEDIASINK_CANNOT_MATCH_CLOCK = 0x00000002,
-            MEDIASINK_RATELESS = 0x00000004,
-            MEDIASINK_CLOCK_REQUIRED = 0x00000008,
-            MEDIASINK_CAN_PREROLL = 0x00000010,
-            MEDIASINK_REQUIRE_REFERENCE_MEDIATYPE = 0x00000020,
-        }
-
         private class CodecApi : ComObject
         {
             private ICodecAPI _api;
@@ -1315,236 +1308,6 @@ namespace Duplicator
 
             void SetValue([MarshalAs(UnmanagedType.LPStruct)] Guid Api, [In] ref object Value);
             // other undefined
-        }
-
-        // VT_BOOL 
-        private static readonly PROPERTYKEY MFPKEY_VBRENABLED = new PROPERTYKEY { fmtid = new Guid("e48d9459-6abe-4eb5-9211-60080c1ab984"), pid = 20 };
-
-        // VT_I4
-        private static readonly PROPERTYKEY MFPKEY_VBRQUALITY = new PROPERTYKEY { fmtid = new Guid("f97b3f3a-9eff-4ac9-8247-35b30eb925f4"), pid = 21 };
-
-        // VT_UI4
-        private static readonly PROPERTYKEY MFPKEY_DESIRED_VBRQUALITY = new PROPERTYKEY { fmtid = new Guid("6dbdf03b-b05c-4a03-8ec1-bbe63db10cb4"), pid = 25 };
-
-        // VT_I4
-        private static readonly PROPERTYKEY MFPKEY_PASSESUSED = new PROPERTYKEY { fmtid = new Guid("b1653ac1-cb7d-43ee-8454-3f9d811b0331"), pid = 19 };
-
-        // VT_I4
-        private static readonly PROPERTYKEY MFPKEY_RMAX = new PROPERTYKEY { fmtid = new Guid("7d8dd246-aaf4-4a24-8166-19396b06ef69"), pid = 24 };
-
-        // VT_I4
-        private static readonly PROPERTYKEY MFPKEY_BMAX = new PROPERTYKEY { fmtid = new Guid("ff365211-21b6-4134-ab7c-52393a8f80f6"), pid = 25 };
-
-        private class PropertyStore : ComObject
-        {
-            private IPropertyStore _store;
-
-            public PropertyStore()
-                : base(CreateMemoryPropertyStore())
-            {
-                _store = (IPropertyStore)Marshal.GetObjectForIUnknown(NativePointer);
-            }
-
-            public int Count => _store.GetCount();
-
-            public int GetInt32Value(PROPERTYKEY key)
-            {
-                var pv = new PROPVARIANT();
-                _store.GetValue(ref key, ref pv);
-                return pv._int32;
-            }
-
-            public uint GetUInt32Value(PROPERTYKEY key)
-            {
-                var pv = new PROPVARIANT();
-                _store.GetValue(ref key, ref pv);
-                return pv._uint32;
-            }
-
-            public bool GetBooleanValue(PROPERTYKEY key)
-            {
-                var pv = new PROPVARIANT();
-                _store.GetValue(ref key, ref pv);
-                return pv._boolean != 0;
-            }
-
-            public void SetValue(PROPERTYKEY key, int value)
-            {
-                var pv = new PROPVARIANT();
-                pv._vt = PropertyType.VT_I4;
-                pv._int32 = value;
-                _store.SetValue(ref key, ref pv);
-            }
-
-            public void SetValue(PROPERTYKEY key, uint value)
-            {
-                var pv = new PROPVARIANT();
-                pv._vt = PropertyType.VT_UI4;
-                pv._uint32 = value;
-                _store.SetValue(ref key, ref pv);
-            }
-
-            public void SetValue(PROPERTYKEY key, bool value)
-            {
-                var pv = new PROPVARIANT();
-                pv._vt = PropertyType.VT_BOOL;
-                pv._boolean = (short)(value ? -1 : 0);
-                _store.SetValue(ref key, ref pv);
-            }
-
-            private static IntPtr CreateMemoryPropertyStore()
-            {
-                int hr = PSCreateMemoryPropertyStore(typeof(IPropertyStore).GUID, out IntPtr store);
-                if (hr != 0)
-                    throw new Win32Exception(hr);
-
-                return store;
-            }
-
-            [Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-            private interface IPropertyStore
-            {
-                int GetCount();
-
-                [PreserveSig]
-                int GetAt(int iProp, out PROPERTYKEY pkey);
-
-                [PreserveSig]
-                int GetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
-
-                [PreserveSig]
-                int SetValue(ref PROPERTYKEY key, [In] ref PROPVARIANT propvar);
-
-                void Commit();
-            }
-
-            // stupid .NET's VarEnum does not define Flags and does not derive from ushort ...
-            [Flags]
-            private enum PropertyType : ushort
-            {
-                VT_EMPTY = 0,
-                VT_NULL = 1,
-                VT_I2 = 2,
-                VT_I4 = 3,
-                VT_R4 = 4,
-                VT_R8 = 5,
-                VT_CY = 6,
-                VT_DATE = 7,
-                VT_BSTR = 8,
-                VT_DISPATCH = 9,
-                VT_ERROR = 10,
-                VT_BOOL = 11,
-                VT_VARIANT = 12,
-                VT_UNKNOWN = 13,
-                VT_DECIMAL = 14,
-                VT_I1 = 16,
-                VT_UI1 = 17,
-                VT_UI2 = 18,
-                VT_UI4 = 19,
-                VT_I8 = 20,
-                VT_UI8 = 21,
-                VT_INT = 22,
-                VT_UINT = 23,
-                VT_VOID = 24,
-                VT_HRESULT = 25,
-                VT_PTR = 26,
-                VT_SAFEARRAY = 27,
-                VT_CARRAY = 28,
-                VT_USERDEFINED = 29,
-                VT_LPSTR = 30,
-                VT_LPWSTR = 31,
-                VT_RECORD = 36,
-                VT_INT_PTR = 37,
-                VT_UINT_PTR = 38,
-                VT_FILETIME = 64,
-                VT_BLOB = 65,
-                VT_STREAM = 66,
-                VT_STORAGE = 67,
-                VT_STREAMED_OBJECT = 68,
-                VT_STORED_OBJECT = 69,
-                VT_BLOB_OBJECT = 70,
-                VT_CF = 71,
-                VT_CLSID = 72,
-                VT_VERSIONED_STREAM = 73,
-                VT_BSTR_BLOB = 0xfff,
-                VT_VECTOR = 0x1000,
-                VT_ARRAY = 0x2000,
-                VT_BYREF = 0x4000,
-                VT_RESERVED = 0x8000,
-                VT_ILLEGAL = 0xffff,
-                VT_ILLEGALMASKED = 0xfff,
-                VT_TYPEMASK = 0xfff
-            }
-
-            [StructLayout(LayoutKind.Explicit)]
-            private struct PROPVARIANT
-            {
-                [FieldOffset(0)]
-                public PropertyType _vt;
-
-                [FieldOffset(8)]
-                public IntPtr _ptr;
-
-                [FieldOffset(8)]
-                public int _int32;
-
-                [FieldOffset(8)]
-                public uint _uint32;
-
-                [FieldOffset(8)]
-                public byte _byte;
-
-                [FieldOffset(8)]
-                public sbyte _sbyte;
-
-                [FieldOffset(8)]
-                public short _int16;
-
-                [FieldOffset(8)]
-                public ushort _uint16;
-
-                [FieldOffset(8)]
-                public long _int64;
-
-                [FieldOffset(8)]
-                public ulong _uint64;
-
-                [FieldOffset(8)]
-                public double _double;
-
-                [FieldOffset(8)]
-                public float _single;
-
-                [FieldOffset(8)]
-                public short _boolean;
-
-                [FieldOffset(8)]
-                public global::System.Runtime.InteropServices.ComTypes.FILETIME _filetime;
-
-                [FieldOffset(8)]
-                public PROPARRAY _ca;
-
-                [FieldOffset(0)]
-                public decimal _decimal;
-
-                [StructLayout(LayoutKind.Sequential)]
-                public struct PROPARRAY
-                {
-                    public int cElems;
-                    public IntPtr pElems;
-                }
-            }
-
-            [DllImport("propsys")]
-            private static extern int PSCreateMemoryPropertyStore([MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IntPtr ppv);
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct PROPERTYKEY
-        {
-            public Guid fmtid;
-            public int pid;
-            public override string ToString() => fmtid.ToString("B") + " " + pid;
         }
 
 #if DEBUG

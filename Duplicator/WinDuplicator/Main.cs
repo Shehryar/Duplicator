@@ -50,19 +50,19 @@ namespace WinDuplicator
             // note: these events arrive on another thread
             switch (e.PropertyName)
             {
-                case nameof(_duplicator.IsDuplicating):
+                case nameof(_duplicator.DuplicatingState):
                     BeginInvoke((Action)(() =>
                     {
-                        bool dup = _duplicator.IsDuplicating;
+                        bool dup = _duplicator.DuplicatingState == Duplicator.DuplicatorState.Started || _duplicator.DuplicatingState == Duplicator.DuplicatorState.Starting;
                         checkBoxDuplicate.Checked = dup;
                         checkBoxRecord.Enabled = dup;
                     }));
                     break;
 
-                case nameof(_duplicator.IsRecording):
+                case nameof(_duplicator.RecordingState):
                     BeginInvoke((Action)(() =>
                     {
-                        checkBoxRecord.Checked = _duplicator.IsRecording;
+                        checkBoxRecord.Checked = _duplicator.RecordingState == Duplicator.DuplicatorState.Started || _duplicator.RecordingState == Duplicator.DuplicatorState.Starting;
                     }));
                     break;
 
@@ -70,7 +70,7 @@ namespace WinDuplicator
                     string mode = _duplicator.IsUsingHardwareBasedEncoder ? "Hardware" : "Software";
                     BeginInvoke((Action)(() =>
                     {
-                        if (_duplicator.IsRecording && !string.IsNullOrEmpty(_duplicator.RecordFilePath))
+                        if (_duplicator.RecordingState == Duplicator.DuplicatorState.Started && !string.IsNullOrEmpty(_duplicator.RecordFilePath))
                         {
                             Text = "Duplicator - " + mode + " Recording " + Path.GetFileName(_duplicator.RecordFilePath);
                         }
@@ -99,7 +99,14 @@ namespace WinDuplicator
 
         private void checkBoxDuplicate_CheckedChanged(object sender, EventArgs e)
         {
-            _duplicator.IsDuplicating = checkBoxDuplicate.Checked;
+            if (checkBoxDuplicate.Checked)
+            {
+                _duplicator.StartDuplicating();
+            }
+            else
+            {
+                _duplicator.StopDuplicating();
+            }
         }
 
         private void buttonAbout_Click(object sender, EventArgs e)
@@ -110,7 +117,14 @@ namespace WinDuplicator
 
         private void checkBoxRecord_CheckedChanged(object sender, EventArgs e)
         {
-            _duplicator.IsRecording = checkBoxRecord.Checked;
+            if (checkBoxRecord.Checked)
+            {
+                _duplicator.StartRecording();
+            }
+            else
+            {
+                _duplicator.StopRecording();
+            }
         }
     }
 }
