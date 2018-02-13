@@ -53,7 +53,7 @@
             this.tableLayoutPanelMain.Name = "tableLayoutPanelMain";
             this.tableLayoutPanelMain.RowCount = 3;
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 60F));
+            this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 80F));
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 30F));
             this.tableLayoutPanelMain.Size = new System.Drawing.Size(345, 461);
             this.tableLayoutPanelMain.TabIndex = 0;
@@ -124,19 +124,20 @@
             this.propertyGridMain.HelpVisible = false;
             this.propertyGridMain.Location = new System.Drawing.Point(3, 3);
             this.propertyGridMain.Name = "propertyGridMain";
-            this.propertyGridMain.Size = new System.Drawing.Size(339, 365);
+            this.propertyGridMain.Size = new System.Drawing.Size(339, 345);
             this.propertyGridMain.TabIndex = 0;
             this.propertyGridMain.ToolbarVisible = false;
             // 
             // textBoxStatus
             // 
             this.textBoxStatus.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textBoxStatus.Location = new System.Drawing.Point(3, 374);
+            this.textBoxStatus.Font = new System.Drawing.Font("Lucida Console", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.textBoxStatus.Location = new System.Drawing.Point(3, 354);
             this.textBoxStatus.Multiline = true;
             this.textBoxStatus.Name = "textBoxStatus";
             this.textBoxStatus.ReadOnly = true;
             this.textBoxStatus.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.textBoxStatus.Size = new System.Drawing.Size(339, 54);
+            this.textBoxStatus.Size = new System.Drawing.Size(339, 74);
             this.textBoxStatus.TabIndex = 3;
             // 
             // Main

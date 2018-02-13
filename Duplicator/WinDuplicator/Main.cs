@@ -25,6 +25,7 @@ namespace WinDuplicator
 
             _duplicator = new Duplicator.Duplicator(_options);
             _duplicator.PropertyChanged += OnDuplicatorPropertyChanged;
+            _duplicator.InformationAvailable += OnDuplicatorInformationAvailable;
             _duplicator.Size = new SharpDX.Size2(splitContainerMain.Panel1.Width, splitContainerMain.Panel1.Height);
 
             splitContainerMain.Panel1.SizeChanged += (sender, e) =>
@@ -40,8 +41,23 @@ namespace WinDuplicator
             splitContainerMain.Panel1.HandleDestroyed += (sender, e) =>
             {
                 _duplicator.Hwnd = IntPtr.Zero;
-
             };
+
+#if DEBUG
+            Text += " - DEBUG";
+#endif
+        }
+
+        private void OnDuplicatorInformationAvailable(object sender, Duplicator.DuplicatorInformationEventArgs e)
+        {
+            BeginInvoke((Action)(() =>
+            {
+                if (!string.IsNullOrEmpty(textBoxStatus.Text))
+                {
+                    textBoxStatus.AppendText(Environment.NewLine);
+                }
+                textBoxStatus.AppendText(e.Information);
+            }));
         }
 
         private void OnDuplicatorPropertyChanged(object sender, PropertyChangedEventArgs e)

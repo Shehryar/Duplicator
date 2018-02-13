@@ -39,6 +39,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Duplicator.cs" />
+    <Compile Include="DuplicatorInformationEventArgs.cs" />
     <Compile Include="DuplicatorOptions.cs" />
     <Compile Include="DictionaryObject.cs" />
     <Compile Include="DuplicatorState.cs" />

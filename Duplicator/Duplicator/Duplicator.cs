@@ -64,7 +64,6 @@ namespace Duplicator
         private Lazy<Brush> _diagsBrush;
         private Lazy<Size2> _desktopSize;
         private int _resized;
-        private bool _acquired;
         private DuplicatorState _duplicatingState;
         private Bitmap _pointerBitmap;
         private System.Threading.Timer _frameRateTimer;
@@ -83,6 +82,7 @@ namespace Duplicator
 #endif
 
         public event PropertyChangedEventHandler PropertyChanged;
+        public event EventHandler<DuplicatorInformationEventArgs> InformationAvailable;
 
         public Duplicator(DuplicatorOptions options)
         {
@@ -127,6 +127,7 @@ namespace Duplicator
         public bool IsUsingDirect3D11AwareEncoder { get; private set; }
         public bool IsUsingHardwareBasedEncoder { get; private set; }
         public bool IsUsingBuiltinEncoder { get; private set; }
+        public string EncoderFriendlyName { get; private set; }
         public int AudioSamplesPerSecond { get; private set; }
         public IntPtr Hwnd { get; set; }
         public string RecordFilePath { get; set; }
@@ -197,6 +198,7 @@ namespace Duplicator
             _duplicationThread = new Thread(DuplicationThreadFunc);
             _duplicationThread.Name = "Duplication" + DateTime.Now.TimeOfDay;
             _duplicationThread.IsBackground = true;
+            _duplicationThread.Priority = ThreadPriority.Highest;
             _duplicationThread.Start();
         }
 
@@ -223,7 +225,7 @@ namespace Duplicator
 
         public void StartRecording()
         {
-            if (RecordingState == DuplicatorState.Starting || DuplicatingState == DuplicatorState.Started)
+            if (RecordingState == DuplicatorState.Starting || RecordingState == DuplicatorState.Started)
                 return;
 
             StartDuplicating();
@@ -237,7 +239,7 @@ namespace Duplicator
 
         public void StopRecording()
         {
-            if (RecordingState == DuplicatorState.Stopping || DuplicatingState == DuplicatorState.Stopped)
+            if (RecordingState == DuplicatorState.Stopping || RecordingState == DuplicatorState.Stopped)
                 return;
 
             RecordingState = DuplicatorState.Stopping;
@@ -318,23 +320,23 @@ namespace Duplicator
         {
             using (frame.Texture)
             {
-                if (_pointerBitmap != null)
-                {
-                    using (var dc = new SharpDX.Direct2D1.DeviceContext(_2D1Device.Value, DeviceContextOptions.EnableMultithreadedOptimizations))
-                    {
-                        using (var surface = frame.Texture.QueryInterface<Surface>())
-                        {
-                            using (var bmp = new Bitmap1(dc, surface))
-                            {
-                                dc.Target = bmp;
-                            }
-                        }
+                //if (_pointerBitmap != null)
+                //{
+                //    using (var dc = new SharpDX.Direct2D1.DeviceContext(_2D1Device.Value, DeviceContextOptions.EnableMultithreadedOptimizations))
+                //    {
+                //        using (var surface = frame.Texture.QueryInterface<Surface>())
+                //        {
+                //            using (var bmp = new Bitmap1(dc, surface))
+                //            {
+                //                dc.Target = bmp;
+                //            }
+                //        }
 
-                        dc.BeginDraw();
-                        DrawPointerBitmap(dc, false, 0, 0, DesktopSize);
-                        dc.EndDraw();
-                    }
-                }
+                //        dc.BeginDraw();
+                //        DrawPointerBitmap(dc, false, 0, 0, DesktopSize);
+                //        dc.EndDraw();
+                //    }
+                //}
 
                 using (var sample = MediaFactory.CreateSample())
                 {
@@ -368,7 +370,7 @@ namespace Duplicator
             {
                 var ticks = Stopwatch.GetTimestamp() - _startTime;
                 var elapsedNs = (10000000 * ticks) / Stopwatch.Frequency;
-                Trace("SendStreamTick :" + elapsedNs);
+                //Trace("SendStreamTick :" + elapsedNs);
                 AddEvent(TraceEventType.WriteAudioTick, elapsedNs, 0);
 
                 if (Debugger.IsAttached)
@@ -407,7 +409,7 @@ namespace Duplicator
                     sample.SampleDuration = elapsedNs - _audioElapsedNs;
                     _audioElapsedNs = elapsedNs;
                     sample.AddBuffer(buffer);
-                    Trace("sample time(ms):" + (sample.SampleTime / 10000) + " duration(ms):" + (sample.SampleDuration / 10000) + " bytes:" + size);
+                    //Trace("sample time(ms):" + (sample.SampleTime / 10000) + " duration(ms):" + (sample.SampleDuration / 10000) + " bytes:" + size);
                     AddEvent(TraceEventType.WriteAudioFrame, sample.SampleTime, sample.SampleDuration);
                     _sinkWriter.Value.WriteSample(_audioOutputIndex, sample);
                     _audioSamplesCount++;
@@ -433,7 +435,6 @@ namespace Duplicator
                 // DXGI_ERROR_ACCESS_LOST
                 if (ex.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Code)
                 {
-                    _acquired = false;
                     _outputDuplication = new Lazy<OutputDuplication>(CreateOutputDuplication, true);
                     return;
                 }
@@ -450,17 +451,10 @@ namespace Duplicator
             SharpDX.DXGI.Resource frame;
             OutputDuplicateFrameInformation frameInfo;
 
-            if (_acquired)
-            {
-                od.ReleaseFrame();
-                _acquired = false;
-            }
-
             long ts = Stopwatch.GetTimestamp();
             try
             {
                 od.AcquireNextFrame(Options.FrameAcquisitionTimeout, out frameInfo, out frame);
-                _acquired = true;
             }
             catch (SharpDXException ex)
             {
@@ -491,19 +485,23 @@ namespace Duplicator
                     }
                 }
 
-                RenderDuplicatedFrame(frame);
+                if (frameInfo.LastPresentTime != 0)
+                {
+                    RenderDuplicatedFrame(frame);
+                }
 
                 if (RecordingState == DuplicatorState.Started && frameInfo.LastPresentTime != 0)
                 {
                     if (_startTime == 0)
                     {
-                        _startTime = Stopwatch.GetTimestamp();
+                        _startTime = frameInfo.LastPresentTime;
                         _videoElapsedNs = 0;
                         _audioElapsedNs = 0;
                     }
 
                     var vf = new VideoFrame();
-                    var ticks = Stopwatch.GetTimestamp() - _startTime;
+                    //var ticks = Stopwatch.GetTimestamp() - _startTime;
+                    var ticks = frameInfo.LastPresentTime - _startTime;
                     var elapsedNs = (10000000 * ticks) / Stopwatch.Frequency;
                     vf.Time = _videoElapsedNs;
                     vf.Duration = elapsedNs - _videoElapsedNs;
@@ -512,6 +510,21 @@ namespace Duplicator
                     using (var res = frame.QueryInterface<SharpDX.Direct3D11.Resource>())
                     {
                         _device.Value.ImmediateContext.CopyResource(res, vf.Texture);
+                    }
+
+                    using (var dc = new SharpDX.Direct2D1.DeviceContext(_2D1Device.Value, DeviceContextOptions.EnableMultithreadedOptimizations))
+                    {
+                        using (var surface = vf.Texture.QueryInterface<Surface>())
+                        {
+                            using (var bmp = new Bitmap1(dc, surface))
+                            {
+                                dc.Target = bmp;
+                            }
+                        }
+
+                        dc.BeginDraw();
+                        DrawPointerBitmap(dc, false, 0, 0, DesktopSize);
+                        dc.EndDraw();
                     }
 
                     Trace("enqueue count:" + _videoFramesQueue.Count + " time(ms):" + vf.Time / 10000 + " elapsed(ms):" + elapsedNs / 10000);
@@ -525,6 +538,7 @@ namespace Duplicator
                         WriteVideoSample(vf);
                     }
                 }
+                od.ReleaseFrame();
             }
         }
 
@@ -536,7 +550,6 @@ namespace Duplicator
                 {
                     case DuplicatorState.Stopping:
                         ClearDuplicatedFrame();
-                        _acquired = false;
                         _duplicationFrameRate = 0;
                         _duplicationFrameNumber = 0;
                         _desktopSize = new Lazy<Size2>(CreateDesktopSize, true);
@@ -700,6 +713,14 @@ namespace Duplicator
 #endif
         }
 
+        private void OnInformationAvailable(string text)
+        {
+            if (text == null)
+                return;
+
+            InformationAvailable?.Invoke(this, new DuplicatorInformationEventArgs(text));
+        }
+
         private void OnPropertyChanged(string name, string traceValue)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -856,7 +877,21 @@ namespace Duplicator
             }
         }
 
-        private OutputDuplication CreateOutputDuplication() => _output.Value?.DuplicateOutput(_device.Value);
+        private OutputDuplication CreateOutputDuplication()
+        {
+            if (Debugger.IsAttached)
+                return _output.Value?.DuplicateOutput(_device.Value);
+
+            try
+            {
+                return _output.Value?.DuplicateOutput(_device.Value);
+            }
+            catch (Exception e)
+            {
+                ReleaseTrace("CreateOutputDuplication failed:" + e.Message);
+            }
+            return null;
+        }
 
         private DXGIDeviceManager CreateDeviceManager()
         {
@@ -997,6 +1032,10 @@ namespace Duplicator
             IsUsingBuiltinEncoder = H264Encoder.IsBuiltinEncoder(writer, _videoOutputIndex);
             IsUsingDirect3D11AwareEncoder = H264Encoder.IsDirect3D11AwareEncoder(writer, _videoOutputIndex);
             IsUsingHardwareBasedEncoder = H264Encoder.IsHardwareBasedEncoder(writer, _videoOutputIndex);
+            EncoderFriendlyName = H264Encoder.GetEncoderFriendlyName(writer, _videoOutputIndex);
+            OnInformationAvailable("Encoder Type : " + (IsUsingHardwareBasedEncoder ? "Hardware" : "Software"));
+            OnInformationAvailable("Direct3D 11 Aware Encoder Type : " + IsUsingDirect3D11AwareEncoder);
+            OnInformationAvailable("Encoder Name : " + EncoderFriendlyName);
             Trace("IsBuiltinEncoder:" + IsUsingBuiltinEncoder + " IsUsingDirect3D11AwareEncoder:" + IsUsingDirect3D11AwareEncoder + " IsUsingHardwareBasedEncoder:" + IsUsingHardwareBasedEncoder);
             OnPropertyChanged(nameof(IsUsingBuiltinEncoder), IsUsingBuiltinEncoder.ToString());
             OnPropertyChanged(nameof(IsUsingDirect3D11AwareEncoder), IsUsingDirect3D11AwareEncoder.ToString());

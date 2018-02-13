@@ -121,6 +121,29 @@ namespace Duplicator
             }
         }
 
+        public static string GetEncoderFriendlyName(SinkWriter writer, int streamIndex)
+        {
+            try
+            {
+                using (var transform = GetTransform(writer, streamIndex))
+                {
+                    if (transform != null)
+                    {
+                        if (IsBuiltinEncoder(transform))
+                            return Enumerate().First(e => e.IsBuiltin).FriendlyName;
+
+                        var clsid = transform.Attributes.Get(TransformAttributeKeys.MftTransformClsidAttribute);
+                        return Enumerate().First(e => e.Clsid == clsid).FriendlyName;
+                    }
+                }
+            }
+            catch
+            {
+                // continue
+            }
+            return "Unknown";
+        }
+
         public static bool IsHardwareBasedEncoder(SinkWriter writer, int streamIndex)
         {
             using (var transform = GetTransform(writer, streamIndex))
