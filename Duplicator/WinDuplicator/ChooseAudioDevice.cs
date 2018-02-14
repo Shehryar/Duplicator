@@ -6,13 +6,13 @@ namespace WinDuplicator
 {
     public partial class ChooseAudioDevice : Form
     {
-        public ChooseAudioDevice(string selectedAudioDevice)
+        public ChooseAudioDevice(string selectedAudioDevice, AudioCapture.DataFlow flow)
         {
             InitializeComponent();
             Icon = Main.EmbeddedIcon;
 
             listViewMain.Select();
-            foreach (var device in LoopbackAudioCapture.GetDevices(LoopbackAudioCapture.DataFlow.Render).Where(d => d.State == LoopbackAudioCapture.AudioDeviceState.Active))
+            foreach (var device in AudioCapture.GetDevices(flow).Where(d => d.State == AudioCapture.AudioDeviceState.Active))
             {
                 var item = listViewMain.Items.Add(device.FriendlyName);
                 item.Tag = device;
@@ -27,7 +27,7 @@ namespace WinDuplicator
             UpdateControls();
         }
 
-        public LoopbackAudioCapture.AudioDevice Device { get; private set; }
+        public AudioCapture.AudioDevice Device { get; private set; }
 
         private void ChooseAdapter_FormClosing(object sender, FormClosingEventArgs e)
         {
@@ -35,7 +35,7 @@ namespace WinDuplicator
             {
                 if (listViewMain.SelectedItems.Count > 0)
                 {
-                    Device = (LoopbackAudioCapture.AudioDevice)listViewMain.SelectedItems[0].Tag;
+                    Device = (AudioCapture.AudioDevice)listViewMain.SelectedItems[0].Tag;
                 }
             }
         }

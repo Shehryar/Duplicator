@@ -2,24 +2,25 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
 
 namespace Duplicator
 {
-    public sealed class LoopbackAudioCapture : IDisposable
+    public sealed class AudioCapture : IDisposable
     {
         private AutoResetEvent _dataEvent = new AutoResetEvent(false);
         private AutoResetEvent _stopEvent;
-        private bool _running;
+        private AudioDevice _device;
         private bool _stopping;
         private int _waitTimeout;
 
-        public event EventHandler<LoopbackAudioCaptureNativeDataEventArgs> NativeDataReady;
-        public event EventHandler<LoopbackAudioCaptureDataEventArgs> DataReady;
+        public event EventHandler<AudioCaptureNativeDataEventArgs> NativeDataReady;
+        public event EventHandler<AudioCaptureDataEventArgs> DataReady;
 
-        public LoopbackAudioCapture()
+        public AudioCapture()
         {
             RaiseDataEvents = true;
             WaitTimeout = 100;
@@ -27,6 +28,7 @@ namespace Duplicator
 
         public bool RaiseNativeDataEvents { get; set; }
         public bool RaiseDataEvents { get; set; }
+        public AudioDevice Device => _device;
 
         public int WaitTimeout
         {
@@ -62,24 +64,17 @@ namespace Duplicator
             }
         }
 
-        public void Start()
-        {
-            using (var device = GetSpeakersDevice())
-            {
-                Start(device);
-            }
-        }
-
+        public void Start() => Start(GetSpeakersDevice());
         public void Start(AudioDevice device) => Start(device, null);
         public void Start(AudioDevice device, string threadTaskName)
         {
-            if (_running)
+            if (_device != null)
                 return;
 
             var thread = new Thread(ThreadLoop);
-            thread.Name = nameof(LoopbackAudioCapture) + DateTime.Now.TimeOfDay;
+            thread.Name = nameof(AudioCapture) + DateTime.Now.TimeOfDay;
             thread.IsBackground = true;
-            thread.Priority = ThreadPriority.Lowest;
+            //thread.Priority = ThreadPriority.Lowest;
             var state = new ThreadState();
             state.Device = device;
             state.TaskName = threadTaskName;
@@ -94,7 +89,7 @@ namespace Duplicator
 
         public void Stop()
         {
-            if (!_running)
+            if (_device == null)
                 return;
 
             _stopEvent.Set();
@@ -117,6 +112,8 @@ namespace Duplicator
             }
         }
 
+        private static bool IsRenderDevice(AudioDevice device) => GetDevices(DataFlow.Render).Any(d => d.Id == device.Id);
+
         // loops is public in case someone wants to handle his own threading/task stuff
         public void Loop(WaitHandle stopHandle) => Loop(stopHandle, null);
         public void Loop(WaitHandle stopHandle, string threadTaskName)
@@ -136,10 +133,12 @@ namespace Duplicator
             if (stopHandle == null)
                 throw new ArgumentNullException(nameof(stopHandle));
 
-            if (_running)
-                throw new InvalidOperationException(); // already looping somewhere
+            if (_device != null)
+                throw new InvalidOperationException("Capture loop was already started.");
 
-            _running = true;
+            _device = device;
+            bool renderDevice = IsRenderDevice(_device);
+
             if (string.IsNullOrEmpty(threadTaskName))
             {
                 threadTaskName = "Audio";
@@ -162,12 +161,15 @@ namespace Duplicator
                 format = Marshal.AllocCoTaskMem(Marshal.SizeOf<CoreAudio.WAVEFORMATEXTENSIBLE>());
                 Marshal.StructureToPtr(fex, format, false);
 
+                var initFlags = CoreAudio.AUDCLNT_FLAGS.AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+                if (renderDevice)
+                {
+                    initFlags |= CoreAudio.AUDCLNT_FLAGS.AUDCLNT_STREAMFLAGS_LOOPBACK;
+                }
+
                 try
                 {
-                    audioClient.Initialize(
-                        CoreAudio.AUDCLNT_SHAREMODE.AUDCLNT_SHAREMODE_SHARED,
-                        CoreAudio.AUDCLNT_FLAGS.AUDCLNT_STREAMFLAGS_LOOPBACK | CoreAudio.AUDCLNT_FLAGS.AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-                        0, 0, format, Guid.Empty);
+                    audioClient.Initialize(CoreAudio.AUDCLNT_SHAREMODE.AUDCLNT_SHAREMODE_SHARED, initFlags, 0, 0, format, Guid.Empty);
                 }
                 finally
                 {
@@ -219,7 +221,16 @@ namespace Duplicator
                             }
                             while (true);
 
-                            int index = WaitHandle.WaitAny(new[] { stopHandle, _dataEvent }, WaitTimeout);
+                            int index;
+                            try
+                            {
+                                index = WaitHandle.WaitAny(new[] { stopHandle, _dataEvent }, WaitTimeout);
+                            }
+                            catch (ObjectDisposedException)
+                            {
+                                index = 0;
+                            }
+
                             if (index == WaitHandle.WaitTimeout)
                                 continue;
 
@@ -245,7 +256,8 @@ namespace Duplicator
                 Marshal.ReleaseComObject(audioClient);
             }
 
-            _running = false;
+            _device?.Dispose();
+            _device = null;
             _stopping = false;
         }
 
@@ -255,7 +267,7 @@ namespace Duplicator
             bool handled = false;
             if (RaiseNativeDataEvents)
             {
-                var ne = new LoopbackAudioCaptureNativeDataEventArgs(dataPtr, bytesCount, ticks);
+                var ne = new AudioCaptureNativeDataEventArgs(dataPtr, bytesCount, ticks);
                 NativeDataReady?.Invoke(this, ne);
                 handled = ne.Handled;
             }
@@ -272,7 +284,7 @@ namespace Duplicator
                     Marshal.Copy(dataPtr, data, 0, bytesCount);
                 }
 
-                var e = new LoopbackAudioCaptureDataEventArgs(data, bytesCount, ticks);
+                var e = new AudioCaptureDataEventArgs(data, bytesCount, ticks);
                 DataReady?.Invoke(this, e);
             }
         }
@@ -286,7 +298,7 @@ namespace Duplicator
                 _stopping = true;
                 dataEvent.Set();
                 dataEvent.Dispose();
-                while (_running && _stopping)
+                while (_device != null && _stopping)
                 {
                     Thread.Sleep(10);
                 }
@@ -302,6 +314,7 @@ namespace Duplicator
         }
 
         public static AudioDevice GetSpeakersDevice() => CreateDevice(GetSpeakers());
+        public static AudioDevice GetMicrophoneDevice() => CreateDevice(GetMicrophone());
 
         public static IReadOnlyList<AudioDevice> GetDevices(DataFlow flow)
         {
@@ -381,6 +394,21 @@ namespace Duplicator
                 var deviceEnumerator = (CoreAudio.IMMDeviceEnumerator)(new CoreAudio.MMDeviceEnumerator());
                 deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, CoreAudio.ERole.eMultimedia, out CoreAudio.IMMDevice speakers);
                 return speakers;
+            }
+            catch
+            {
+                // huh? not on vista?
+                return null;
+            }
+        }
+
+        private static CoreAudio.IMMDevice GetMicrophone()
+        {
+            try
+            {
+                var deviceEnumerator = (CoreAudio.IMMDeviceEnumerator)(new CoreAudio.MMDeviceEnumerator());
+                deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Capture, CoreAudio.ERole.eMultimedia, out CoreAudio.IMMDevice mic);
+                return mic;
             }
             catch
             {
@@ -602,7 +630,7 @@ namespace Duplicator
 
     public class WaveFormat
     {
-        internal WaveFormat(LoopbackAudioCapture.CoreAudio.WAVEFORMATEXTENSIBLE fex)
+        internal WaveFormat(AudioCapture.CoreAudio.WAVEFORMATEXTENSIBLE fex)
         {
             ChannelsCount = fex.Format.nChannels;
             SamplesPerSecond = fex.Format.nSamplesPerSec;
@@ -619,9 +647,9 @@ namespace Duplicator
         public Guid Format { get; }
     }
 
-    public class LoopbackAudioCaptureNativeDataEventArgs : HandledEventArgs
+    public class AudioCaptureNativeDataEventArgs : HandledEventArgs
     {
-        internal LoopbackAudioCaptureNativeDataEventArgs(IntPtr data, int size, long time)
+        internal AudioCaptureNativeDataEventArgs(IntPtr data, int size, long time)
         {
             Data = data;
             Size = size;
@@ -633,9 +661,9 @@ namespace Duplicator
         public long Time { get; }
     }
 
-    public class LoopbackAudioCaptureDataEventArgs : EventArgs
+    public class AudioCaptureDataEventArgs : EventArgs
     {
-        internal LoopbackAudioCaptureDataEventArgs(byte[] data, int size, long time)
+        internal AudioCaptureDataEventArgs(byte[] data, int size, long time)
         {
             Data = data;
             Size = size;

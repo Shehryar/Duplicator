@@ -37,7 +37,7 @@
             // splitContainerMain.Panel2
             // 
             this.splitContainerMain.Panel2.Controls.Add(this.tableLayoutPanelMain);
-            this.splitContainerMain.Size = new System.Drawing.Size(806, 463);
+            this.splitContainerMain.Size = new System.Drawing.Size(806, 513);
             this.splitContainerMain.SplitterDistance = 455;
             this.splitContainerMain.TabIndex = 0;
             // 
@@ -55,7 +55,7 @@
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 80F));
             this.tableLayoutPanelMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 30F));
-            this.tableLayoutPanelMain.Size = new System.Drawing.Size(345, 461);
+            this.tableLayoutPanelMain.Size = new System.Drawing.Size(345, 511);
             this.tableLayoutPanelMain.TabIndex = 0;
             // 
             // panelCommands
@@ -65,7 +65,7 @@
             this.panelCommands.Controls.Add(this.checkBoxDuplicate);
             this.panelCommands.Controls.Add(this.buttonQuit);
             this.panelCommands.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.panelCommands.Location = new System.Drawing.Point(0, 431);
+            this.panelCommands.Location = new System.Drawing.Point(0, 481);
             this.panelCommands.Margin = new System.Windows.Forms.Padding(0);
             this.panelCommands.Name = "panelCommands";
             this.panelCommands.Size = new System.Drawing.Size(345, 30);
@@ -124,7 +124,7 @@
             this.propertyGridMain.HelpVisible = false;
             this.propertyGridMain.Location = new System.Drawing.Point(3, 3);
             this.propertyGridMain.Name = "propertyGridMain";
-            this.propertyGridMain.Size = new System.Drawing.Size(339, 345);
+            this.propertyGridMain.Size = new System.Drawing.Size(339, 395);
             this.propertyGridMain.TabIndex = 0;
             this.propertyGridMain.ToolbarVisible = false;
             // 
@@ -132,7 +132,7 @@
             // 
             this.textBoxStatus.Dock = System.Windows.Forms.DockStyle.Fill;
             this.textBoxStatus.Font = new System.Drawing.Font("Lucida Console", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.textBoxStatus.Location = new System.Drawing.Point(3, 354);
+            this.textBoxStatus.Location = new System.Drawing.Point(3, 404);
             this.textBoxStatus.Multiline = true;
             this.textBoxStatus.Name = "textBoxStatus";
             this.textBoxStatus.ReadOnly = true;
@@ -144,7 +144,7 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(806, 463);
+            this.ClientSize = new System.Drawing.Size(806, 513);
             this.Controls.Add(this.splitContainerMain);
             this.Name = "Main";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;

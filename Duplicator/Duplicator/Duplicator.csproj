@@ -44,7 +44,7 @@
     <Compile Include="DictionaryObject.cs" />
     <Compile Include="DuplicatorState.cs" />
     <Compile Include="H264Encoder.cs" />
-    <Compile Include="LoopbackAudioCapture.cs" />
+    <Compile Include="AudioCapture.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

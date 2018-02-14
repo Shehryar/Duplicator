@@ -32,14 +32,17 @@ namespace Duplicator
             Adapter = adapter.Description.Description;
             Output = adapter.Outputs.First().Description.DeviceName;
             FrameAcquisitionTimeout = 500;
+            AudioAcquisitionTimeout = 500;
             ShowCursor = true;
             PreserveRatio = true;
             RecordingFrameRate = 60f;
             OutputFileFormat = DefaultFileFormat;
             OutputDirectoryPath = GetDefaultOutputDirectoryPath();
             EnableHardwareTransforms = true;
-            EnableSoundRecording = true;
-            AudioDevice = LoopbackAudioCapture.GetSpeakersDevice()?.FriendlyName;
+            CaptureSound = true;
+            CaptureMicrophone = false;
+            SoundDevice = AudioCapture.GetSpeakersDevice()?.FriendlyName;
+            MicrophoneDevice = AudioCapture.GetMicrophoneDevice()?.FriendlyName;
             UseRecordingQueue = false;
         }
 
@@ -52,12 +55,13 @@ namespace Duplicator
         [Category(RecordingCategory)]
         public virtual string OutputDirectoryPath { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
 
+        [Browsable(false)] // doesn't work
         [DisplayName("Use Intermediate Queue")]
         [Category(RecordingCategory)]
         [DefaultValue(false)]
         public virtual bool UseRecordingQueue { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
-        [Browsable(false)] // not use
+        [Browsable(false)] // not used
         [DisplayName("Frame Rate")]
         [Category(RecordingCategory)]
         [DefaultValue(60f)]
@@ -68,14 +72,23 @@ namespace Duplicator
         [DefaultValue(true)]
         public virtual bool EnableHardwareTransforms { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
-        [DisplayName("Enable")]
+        [DisplayName("Capture Sound")]
         [Category(SoundRecordingCategory)]
         [DefaultValue(true)]
-        public virtual bool EnableSoundRecording { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+        public virtual bool CaptureSound { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
-        [DisplayName("Audio Device")]
+        [DisplayName("Capture Microphone")]
         [Category(SoundRecordingCategory)]
-        public virtual string AudioDevice { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
+        [DefaultValue(false)]
+        public virtual bool CaptureMicrophone { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Sound Device")]
+        [Category(SoundRecordingCategory)]
+        public virtual string SoundDevice { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
+
+        [DisplayName("Microphone Device")]
+        [Category(SoundRecordingCategory)]
+        public virtual string MicrophoneDevice { get => DictionaryObjectGetPropertyValue<string>(); set => DictionaryObjectSetPropertyValue(value); }
 
         [DisplayName("Disable Throttling")]
         [Category(RecordingCategory)]
@@ -134,7 +147,21 @@ namespace Duplicator
             }
         }
 
-        public LoopbackAudioCapture.AudioDevice GetAudioDevice() => LoopbackAudioCapture.GetDevices(LoopbackAudioCapture.DataFlow.All).FirstOrDefault(d => d.FriendlyName == AudioDevice);
+        [DisplayName("Audio Acquisition Timeout")]
+        [Category(InputCategory)]
+        [DefaultValue(500)]
+        public virtual int AudioAcquisitionTimeout
+        {
+            get => DictionaryObjectGetPropertyValue<int>();
+            set
+            {
+                // we don't want infinite
+                DictionaryObjectSetPropertyValue(Math.Max(0, value));
+            }
+        }
+
+        public AudioCapture.AudioDevice GetSoundDevice() => AudioCapture.GetDevices(AudioCapture.DataFlow.All).FirstOrDefault(d => d.FriendlyName == SoundDevice);
+        public AudioCapture.AudioDevice GetMicrophoneDevice() => AudioCapture.GetDevices(AudioCapture.DataFlow.All).FirstOrDefault(d => d.FriendlyName == MicrophoneDevice);
 
         public Adapter1 GetAdapter()
         {

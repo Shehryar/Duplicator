@@ -31,6 +31,14 @@ namespace Duplicator
 
         // common
         private ConcurrentQueue<TraceEvent> _events = new ConcurrentQueue<TraceEvent>();
+        private int _resized;
+        private System.Threading.Timer _frameRateTimer;
+        private Lazy<TextFormat> _diagsTextFormat;
+        private Lazy<Brush> _diagsBrush;
+        private Size2 _size;
+#if DEBUG
+        private Lazy<DeviceDebug> _deviceDebug;
+#endif
 
         // recording common
         private Thread _recordingThread;
@@ -47,26 +55,27 @@ namespace Duplicator
         private long _videoElapsedNs;
 
         // sound recording
-        private int _audioOutputIndex;
-        private long _audioElapsedNs;
-        private LoopbackAudioCapture _audioCapture;
-        private int _audioSamplesCount;
-        private int _audioGapsCount;
+        private int _soundOutputIndex;
+        private int _microphoneOutputIndex;
+        private long _soundElapsedNs;
+        private long _microphoneElapsedNs;
+        private AudioCapture _soundCapture;
+        private AudioCapture _microphoneCapture;
+        private int _soundSamplesCount;
+        private int _soundGapsCount;
+        private int _microphoneSamplesCount;
+        private int _microphoneGapsCount;
 
         // duplicating
-        private Lazy<SwapChain1> _swapChain;
         private Lazy<SharpDX.Direct2D1.Device> _2D1Device;
         private Lazy<SharpDX.Direct2D1.DeviceContext> _backBufferDc;
         private Lazy<SharpDX.Direct3D11.Device> _device;
         private Lazy<OutputDuplication> _outputDuplication;
         private Lazy<Output1> _output;
-        private Lazy<TextFormat> _diagsTextFormat;
-        private Lazy<Brush> _diagsBrush;
         private Lazy<Size2> _desktopSize;
-        private int _resized;
+        private Lazy<SwapChain1> _swapChain;
         private DuplicatorState _duplicatingState;
         private Bitmap _pointerBitmap;
-        private System.Threading.Timer _frameRateTimer;
         private Thread _duplicationThread;
         private int _currentAccumulatedFramesCount;
         private int _videoSamplesCount;
@@ -75,11 +84,6 @@ namespace Duplicator
         private RawPoint _pointerPosition;
         private RawPoint _pointerHotspot;
         private bool _pointerVisible;
-        private int _pointerType;
-        private Size2 _size;
-#if DEBUG
-        private Lazy<DeviceDebug> _deviceDebug;
-#endif
 
         public event PropertyChangedEventHandler PropertyChanged;
         public event EventHandler<DuplicatorInformationEventArgs> InformationAvailable;
@@ -111,10 +115,15 @@ namespace Duplicator
                 _duplicationFrameNumber = 0;
             }, null, 0, 1000);
 
-            _audioCapture = new LoopbackAudioCapture();
-            _audioCapture.RaiseNativeDataEvents = true;
-            _audioCapture.RaiseDataEvents = false;
-            _audioCapture.NativeDataReady += AudioCaptureDataReady;
+            _soundCapture = new AudioCapture();
+            _soundCapture.RaiseNativeDataEvents = true;
+            _soundCapture.RaiseDataEvents = false;
+            _soundCapture.NativeDataReady += SoundCaptureDataReady;
+
+            _microphoneCapture = new AudioCapture();
+            _microphoneCapture.RaiseNativeDataEvents = true;
+            _microphoneCapture.RaiseDataEvents = false;
+            _microphoneCapture.NativeDataReady += MicrophoneCaptureDataReady;
 
             _swapChain = new Lazy<SwapChain1>(CreateSwapChain, true);
             _2D1Device = new Lazy<SharpDX.Direct2D1.Device>(Create2D1Device, true);
@@ -128,7 +137,8 @@ namespace Duplicator
         public bool IsUsingHardwareBasedEncoder { get; private set; }
         public bool IsUsingBuiltinEncoder { get; private set; }
         public string EncoderFriendlyName { get; private set; }
-        public int AudioSamplesPerSecond { get; private set; }
+        public int SoundSamplesPerSecond { get; private set; }
+        public int MicrophoneSamplesPerSecond { get; private set; }
         public IntPtr Hwnd { get; set; }
         public string RecordFilePath { get; set; }
 
@@ -247,7 +257,7 @@ namespace Duplicator
             _recordingThread = null;
             if (t != null)
             {
-                var result = t.Join((int)Math.Min(Options.FrameAcquisitionTimeout * 2L, int.MaxValue));
+                var result = t.Join((int)Math.Min(Options.AudioAcquisitionTimeout * 2L, int.MaxValue));
                 if (!result)
                 {
                     Trace("Recording thread timed out");
@@ -270,23 +280,27 @@ namespace Duplicator
                 {
                     case DuplicatorState.Stopping:
                         DrainRecordingVideoQueue();
-                        _audioCapture.Stop();
+                        _microphoneCapture.Stop();
+                        _soundCapture.Stop();
 
                         if (_videoSamplesCount > 0)
                         {
-                            Trace("SinkWriter Finalize video samples:" + _videoSamplesCount + " audio samples:" + _audioSamplesCount + " audio gaps:" + _audioGapsCount);
+                            Trace("SinkWriter Finalize video samples:" + _videoSamplesCount + " sound samples:" + _soundSamplesCount + " gaps:" + _soundGapsCount + " mic samples:" + _microphoneSamplesCount + " gaps:" + _microphoneGapsCount);
                             _sinkWriter.Value.Finalize();
                             _videoSamplesCount = 0;
                         }
 
-                        _audioSamplesCount = 0;
+                        _soundSamplesCount = 0;
+                        _microphoneSamplesCount = 0;
                         _sinkWriter = Reset(_sinkWriter, CreateSinkWriter);
                         _devManager = Reset(_devManager, CreateDeviceManager);
                         _startTime = 0;
                         _videoElapsedNs = 0;
-                        _audioElapsedNs = 0;
+                        _soundElapsedNs = 0;
+                        _microphoneElapsedNs = 0;
                         _videoOutputIndex = 0;
-                        _audioOutputIndex = 0;
+                        _soundOutputIndex = 0;
+                        _microphoneOutputIndex = 0;
                         DumpTraceEvents();
                         RecordFilePath = null;
                         RecordingState = DuplicatorState.Stopped;
@@ -297,7 +311,7 @@ namespace Duplicator
                         break;
                 }
 
-                bool result = _queuedVideoFrameEvent.WaitOne(500);
+                bool result = _queuedVideoFrameEvent.WaitOne(Options.AudioAcquisitionTimeout);
                 Trace("result:" + result + " queued:" + _videoFramesQueue.Count);
                 if (!result && _videoFramesQueue.Count == 0)
                     continue;
@@ -320,24 +334,6 @@ namespace Duplicator
         {
             using (frame.Texture)
             {
-                //if (_pointerBitmap != null)
-                //{
-                //    using (var dc = new SharpDX.Direct2D1.DeviceContext(_2D1Device.Value, DeviceContextOptions.EnableMultithreadedOptimizations))
-                //    {
-                //        using (var surface = frame.Texture.QueryInterface<Surface>())
-                //        {
-                //            using (var bmp = new Bitmap1(dc, surface))
-                //            {
-                //                dc.Target = bmp;
-                //            }
-                //        }
-
-                //        dc.BeginDraw();
-                //        DrawPointerBitmap(dc, false, 0, 0, DesktopSize);
-                //        dc.EndDraw();
-                //    }
-                //}
-
                 using (var sample = MediaFactory.CreateSample())
                 {
                     MediaFactory.CreateDXGISurfaceBuffer(typeof(Texture2D).GUID, frame.Texture, 0, new RawBool(true), out MediaBuffer buffer);
@@ -358,13 +354,19 @@ namespace Duplicator
             }
         }
 
-        private void AudioCaptureDataReady(object sender, LoopbackAudioCaptureNativeDataEventArgs e)
+        private void MicrophoneCaptureDataReady(object sender, AudioCaptureNativeDataEventArgs e)
         {
-            WriteAudioSample(e.Data, e.Size);
+            WriteAudioSample(e.Data, e.Size, _microphoneOutputIndex, ref _microphoneGapsCount, ref _microphoneSamplesCount, ref _microphoneElapsedNs);
             e.Handled = true;
         }
 
-        private void WriteAudioSample(IntPtr data, int size)
+        private void SoundCaptureDataReady(object sender, AudioCaptureNativeDataEventArgs e)
+        {
+            WriteAudioSample(e.Data, e.Size, _soundOutputIndex, ref _soundGapsCount, ref _soundSamplesCount, ref _soundElapsedNs);
+            e.Handled = true;
+        }
+
+        private void WriteAudioSample(IntPtr data, int size, int streamIndex, ref int gaps, ref int samplesCount, ref long elapsed)
         {
             if (size == 0)
             {
@@ -375,22 +377,23 @@ namespace Duplicator
 
                 if (Debugger.IsAttached)
                 {
-                    _sinkWriter.Value.SendStreamTick(_audioOutputIndex, elapsedNs);
+                    _sinkWriter.Value.SendStreamTick(streamIndex, elapsedNs);
                 }
                 else
                 {
                     try
                     {
-                        _sinkWriter.Value.SendStreamTick(_audioOutputIndex, elapsedNs);
+                        _sinkWriter.Value.SendStreamTick(streamIndex, elapsedNs);
                     }
                     catch (Exception e)
                     {
                         // we may be closing down
-                        ReleaseTrace("SendStreamTick failed:" + e.Message);
+                        ReleaseTrace("SendStreamTick[" + streamIndex + "] failed:" + e.Message);
                         AddEvent(TraceEventType.Error, elapsedNs, 0, e.Message);
                     }
                 }
-                _audioGapsCount++;
+
+                gaps++;
                 return;
             }
 
@@ -405,14 +408,14 @@ namespace Duplicator
                 {
                     var ticks = Stopwatch.GetTimestamp() - _startTime;
                     var elapsedNs = (10000000 * ticks) / Stopwatch.Frequency;
-                    sample.SampleTime = _audioElapsedNs;
-                    sample.SampleDuration = elapsedNs - _audioElapsedNs;
-                    _audioElapsedNs = elapsedNs;
+                    sample.SampleTime = elapsed;
+                    sample.SampleDuration = elapsedNs - elapsed;
+                    elapsed = elapsedNs;
                     sample.AddBuffer(buffer);
-                    //Trace("sample time(ms):" + (sample.SampleTime / 10000) + " duration(ms):" + (sample.SampleDuration / 10000) + " bytes:" + size);
+                    //Trace("sample time(ms)[" + index + "]:" + (sample.SampleTime / 10000) + " duration(ms):" + (sample.SampleDuration / 10000) + " bytes:" + size);
                     AddEvent(TraceEventType.WriteAudioFrame, sample.SampleTime, sample.SampleDuration);
-                    _sinkWriter.Value.WriteSample(_audioOutputIndex, sample);
-                    _audioSamplesCount++;
+                    _sinkWriter.Value.WriteSample(streamIndex, sample);
+                    samplesCount++;
                 }
             }
         }
@@ -496,11 +499,11 @@ namespace Duplicator
                     {
                         _startTime = frameInfo.LastPresentTime;
                         _videoElapsedNs = 0;
-                        _audioElapsedNs = 0;
+                        _soundElapsedNs = 0;
+                        _microphoneElapsedNs = 0;
                     }
 
                     var vf = new VideoFrame();
-                    //var ticks = Stopwatch.GetTimestamp() - _startTime;
                     var ticks = frameInfo.LastPresentTime - _startTime;
                     var elapsedNs = (10000000 * ticks) / Stopwatch.Frequency;
                     vf.Time = _videoElapsedNs;
@@ -999,11 +1002,12 @@ namespace Duplicator
             //    capi.SetValue(CODECAPI_AVEncAdaptiveMode, (uint)eAVEncAdaptiveMode.eAVEncAdaptiveMode_FrameRate);
             //}
 
-            if (Options.EnableSoundRecording)
+            if (Options.CaptureSound)
             {
-                var format = _audioCapture.GetFormat();
-                AudioSamplesPerSecond = format.SamplesPerSecond;
-                OnPropertyChanged(nameof(AudioSamplesPerSecond), AudioSamplesPerSecond.ToString());
+                var format = _soundCapture.GetFormat();
+                SoundSamplesPerSecond = format.SamplesPerSecond;
+                OnInformationAvailable("Sound Samples Per Second : " + SoundSamplesPerSecond);
+                OnPropertyChanged(nameof(SoundSamplesPerSecond), SoundSamplesPerSecond.ToString());
 
                 using (var audioStream = new MediaType())
                 {
@@ -1012,8 +1016,8 @@ namespace Duplicator
                     audioStream.Set(MediaTypeAttributeKeys.AudioNumChannels, format.ChannelsCount);
                     audioStream.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, format.SamplesPerSecond);
                     audioStream.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16); // loopback forces 16
-                    writer.AddStream(audioStream, out _audioOutputIndex);
-                    Trace("Added Audio Stream index:" + _audioOutputIndex);
+                    writer.AddStream(audioStream, out _soundOutputIndex);
+                    Trace("Added Sound Stream index:" + _soundOutputIndex);
                 }
 
                 using (var audio = new MediaType())
@@ -1023,8 +1027,38 @@ namespace Duplicator
                     audio.Set(MediaTypeAttributeKeys.AudioNumChannels, format.ChannelsCount);
                     audio.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, format.SamplesPerSecond);
                     audio.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16); // loopback forces 16
-                    Trace("Add Audio Input Media Type");
-                    writer.SetInputMediaType(_audioOutputIndex, audio, null);
+                    Trace("Add Sound Input Media Type");
+                    writer.SetInputMediaType(_soundOutputIndex, audio, null);
+                }
+            }
+
+            if (Options.CaptureMicrophone)
+            {
+                var format = _microphoneCapture.GetFormat();
+                MicrophoneSamplesPerSecond = format.SamplesPerSecond;
+                OnInformationAvailable("Microphone Samples Per Second : " + MicrophoneSamplesPerSecond);
+                OnPropertyChanged(nameof(MicrophoneSamplesPerSecond), MicrophoneSamplesPerSecond.ToString());
+
+                using (var audioStream = new MediaType())
+                {
+                    audioStream.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Audio);
+                    audioStream.Set(MediaTypeAttributeKeys.Subtype, AudioFormatGuids.Aac);
+                    audioStream.Set(MediaTypeAttributeKeys.AudioNumChannels, format.ChannelsCount);
+                    audioStream.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, format.SamplesPerSecond);
+                    audioStream.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16); // loopback forces 16
+                    writer.AddStream(audioStream, out _microphoneOutputIndex);
+                    Trace("Added Microphone Stream index:" + _microphoneOutputIndex);
+                }
+
+                using (var audio = new MediaType())
+                {
+                    audio.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Audio);
+                    audio.Set(MediaTypeAttributeKeys.Subtype, AudioFormatGuids.Pcm);
+                    audio.Set(MediaTypeAttributeKeys.AudioNumChannels, format.ChannelsCount);
+                    audio.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, format.SamplesPerSecond);
+                    audio.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16); // loopback forces 16
+                    Trace("Add Microphone Input Media Type");
+                    writer.SetInputMediaType(_microphoneOutputIndex, audio, null);
                 }
             }
 
@@ -1044,10 +1078,22 @@ namespace Duplicator
 
             writer.BeginWriting();
 
-            if (Options.EnableSoundRecording)
+            if (Options.CaptureMicrophone)
             {
-                var ad = Options.GetAudioDevice() ?? LoopbackAudioCapture.GetSpeakersDevice();
-                _audioCapture.Start(ad);
+                var ad = Options.GetMicrophoneDevice() ?? AudioCapture.GetMicrophoneDevice();
+                if (ad != null)
+                {
+                    _microphoneCapture.Start(ad);
+                }
+            }
+
+            if (Options.CaptureSound)
+            {
+                var ad = Options.GetSoundDevice() ?? AudioCapture.GetSpeakersDevice();
+                if (ad != null)
+                {
+                    _soundCapture.Start(ad);
+                }
             }
             OnPropertyChanged(nameof(RecordFilePath), RecordFilePath);
             return writer;
@@ -1081,7 +1127,6 @@ namespace Duplicator
 
             try
             {
-                _pointerType = shapeInfo.Type;
                 _pointerHotspot = shapeInfo.HotSpot;
                 int bufferSize;
                 int pitch;
