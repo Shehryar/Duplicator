@@ -1,5 +1,5 @@
 # Duplicator
-Screen Capture and Video Recording C# samples. There is only a Winform sample right now, but it should work with WPF.
+Screen Capture and Video Recording C# samples. There is only a Winform sample right now, but it should work with WPF because it only uses an Hwnd handle.
 
 ## Key points:
 
