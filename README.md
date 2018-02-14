@@ -14,4 +14,4 @@ Screen Capture and Video Recording C# samples. There is only a Winform sample ri
 
 * The Frame Rate choice (which is optional, you can choose to use the `<Automatic>` mode) may influence the encoder choice (this is automatic). Some hardware encoders support only some frame rates. The choosen encoder will be displayed after recording has started.
 
-![WinDuplicator.png](Doc/WinDuplicator.png?raw=true)
+![WinDuplicator.png](Duplicator/Doc/WinDuplicator.png?raw=true)
