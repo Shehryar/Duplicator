@@ -32,13 +32,31 @@ namespace WinDuplicator
 
         private class FrameRateConverter : TypeConverter
         {
+            private const string Automatic = "<Automatic>";
+
             public override bool CanConvertFrom(ITypeDescriptorContext context, Type sourceType) => true;
-            public override object ConvertFrom(ITypeDescriptorContext context, CultureInfo culture, object value) => float.Parse((string)value);
+
+            public override object ConvertFrom(ITypeDescriptorContext context, CultureInfo culture, object value)
+            {
+                if (Automatic.Equals(value))
+                    return 0f;
+
+                return float.Parse((string)value);
+            }
+
+            public override object ConvertTo(ITypeDescriptorContext context, CultureInfo culture, object value, Type destinationType)
+            {
+                if (0f.Equals(value))
+                    return Automatic;
+
+                return base.ConvertTo(context, culture, value, destinationType);
+            }
 
             public override bool GetStandardValuesSupported(ITypeDescriptorContext context) => true;
             public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
             {
                 var list = new List<float>();
+                list.Add(0f);
                 list.Add(23.976f);
                 list.Add(24f);
                 list.Add(25);

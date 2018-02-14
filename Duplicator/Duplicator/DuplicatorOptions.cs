@@ -35,7 +35,7 @@ namespace Duplicator
             AudioAcquisitionTimeout = 500;
             ShowCursor = true;
             PreserveRatio = true;
-            RecordingFrameRate = 60f;
+            RecordingFrameRate = 0;
             OutputFileFormat = DefaultFileFormat;
             OutputDirectoryPath = GetDefaultOutputDirectoryPath();
             EnableHardwareTransforms = true;
@@ -61,11 +61,11 @@ namespace Duplicator
         [DefaultValue(false)]
         public virtual bool UseRecordingQueue { get => DictionaryObjectGetPropertyValue<bool>(); set => DictionaryObjectSetPropertyValue(value); }
 
-        [Browsable(false)] // not used
+        //[Browsable(false)] // not used
         [DisplayName("Frame Rate")]
         [Category(RecordingCategory)]
-        [DefaultValue(60f)]
-        public virtual float RecordingFrameRate { get => DictionaryObjectGetPropertyValue<float>(); set => DictionaryObjectSetPropertyValue(Math.Max(23.976f, value)); }
+        [DefaultValue(0f)]
+        public virtual float RecordingFrameRate { get => DictionaryObjectGetPropertyValue<float>(); set => DictionaryObjectSetPropertyValue(Math.Max(0f, value)); }
 
         [DisplayName("Enable Hardware Encoding")]
         [Category(RecordingCategory)]

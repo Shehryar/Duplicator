@@ -72,7 +72,7 @@ namespace Duplicator
         private Lazy<SharpDX.Direct3D11.Device> _device;
         private Lazy<OutputDuplication> _outputDuplication;
         private Lazy<Output1> _output;
-        private Lazy<Size2> _desktopSize;
+        private Lazy<Size2> _screenSize;
         private Lazy<SwapChain1> _swapChain;
         private DuplicatorState _duplicatingState;
         private Bitmap _pointerBitmap;
@@ -102,7 +102,7 @@ namespace Duplicator
 #if DEBUG
             _deviceDebug = new Lazy<DeviceDebug>(CreateDeviceDebug, true);
 #endif
-            _desktopSize = new Lazy<Size2>(CreateDesktopSize, true);
+            _screenSize = new Lazy<Size2>(CreateScreenSize, true);
             _output = new Lazy<Output1>(CreateOutput, true);
             _outputDuplication = new Lazy<OutputDuplication>(CreateOutputDuplication, true);
             _diagsTextFormat = new Lazy<TextFormat>(CreateDiagsTextFormat, true);
@@ -131,7 +131,7 @@ namespace Duplicator
         }
 
         public DuplicatorOptions Options { get; }
-        public Size2 DesktopSize => _desktopSize.Value;
+        public Size2 ScreenSize => _screenSize.Value;
         public Size2 RenderSize { get; private set; }
         public bool IsUsingDirect3D11AwareEncoder { get; private set; }
         public bool IsUsingHardwareBasedEncoder { get; private set; }
@@ -152,15 +152,15 @@ namespace Duplicator
 
                 _size = value;
                 Interlocked.Exchange(ref _resized, 1);
-                if (Options.PreserveRatio && value.Height > 0 && value.Width > 0 && DesktopSize.Width > 0 && DesktopSize.Height > 0)
+                if (Options.PreserveRatio && value.Height > 0 && value.Width > 0 && ScreenSize.Width > 0 && ScreenSize.Height > 0)
                 {
-                    if (value.Width * DesktopSize.Height > value.Height * DesktopSize.Width)
+                    if (value.Width * ScreenSize.Height > value.Height * ScreenSize.Width)
                     {
-                        RenderSize = new Size2((value.Height * DesktopSize.Width) / DesktopSize.Height, value.Height);
+                        RenderSize = new Size2((value.Height * ScreenSize.Width) / ScreenSize.Height, value.Height);
                     }
                     else
                     {
-                        RenderSize = new Size2(value.Width, (value.Width * DesktopSize.Height) / DesktopSize.Width);
+                        RenderSize = new Size2(value.Width, (value.Width * ScreenSize.Height) / ScreenSize.Width);
                     }
                 }
                 else
@@ -526,7 +526,7 @@ namespace Duplicator
                         }
 
                         dc.BeginDraw();
-                        DrawPointerBitmap(dc, false, 0, 0, DesktopSize);
+                        DrawPointerBitmap(dc, false, 0, 0, ScreenSize);
                         dc.EndDraw();
                     }
 
@@ -555,7 +555,7 @@ namespace Duplicator
                         ClearDuplicatedFrame();
                         _duplicationFrameRate = 0;
                         _duplicationFrameNumber = 0;
-                        _desktopSize = new Lazy<Size2>(CreateDesktopSize, true);
+                        _screenSize = new Lazy<Size2>(CreateScreenSize, true);
                         _pointerBitmap = Dispose(_pointerBitmap);
                         _diagsTextFormat = Reset(_diagsTextFormat, CreateDiagsTextFormat);
                         _diagsBrush = Reset(_diagsBrush, CreateDiagsBrush);
@@ -684,18 +684,18 @@ namespace Duplicator
             // note: the doc says not to use the hotspot, but it seems we still need to need it...
             if (proportional)
             {
-                int captureX = ((_pointerPosition.X - _pointerHotspot.X) * renderSize.Width) / DesktopSize.Width + renderX;
-                int captureY = ((_pointerPosition.Y - _pointerHotspot.Y) * renderSize.Height) / DesktopSize.Height + renderY;
+                int captureX = ((_pointerPosition.X - _pointerHotspot.X) * renderSize.Width) / ScreenSize.Width + renderX;
+                int captureY = ((_pointerPosition.Y - _pointerHotspot.Y) * renderSize.Height) / ScreenSize.Height + renderY;
                 rect = new RawRectangleF(
                     captureX,
                     captureY,
-                    captureX + (pb.Size.Width * renderSize.Width) / DesktopSize.Width,
-                    captureY + (pb.Size.Height * renderSize.Height) / DesktopSize.Height);
+                    captureX + (pb.Size.Width * renderSize.Width) / ScreenSize.Width,
+                    captureY + (pb.Size.Height * renderSize.Height) / ScreenSize.Height);
             }
             else
             {
-                int captureX = (_pointerPosition.X * renderSize.Width) / DesktopSize.Width - _pointerHotspot.X + renderX;
-                int captureY = (_pointerPosition.Y * renderSize.Height) / DesktopSize.Height - _pointerHotspot.Y + renderY;
+                int captureX = (_pointerPosition.X * renderSize.Width) / ScreenSize.Width - _pointerHotspot.X + renderX;
+                int captureY = (_pointerPosition.Y * renderSize.Height) / ScreenSize.Height - _pointerHotspot.Y + renderY;
                 rect = new RawRectangleF(
                     captureX,
                     captureY,
@@ -739,6 +739,8 @@ namespace Duplicator
                 case nameof(DuplicatorOptions.Output):
                     var restart = DuplicatingState == DuplicatorState.Starting || DuplicatingState == DuplicatorState.Started;
                     StopDuplicating();
+                    _output = new Lazy<Output1>(CreateOutput, true);
+                    _screenSize = new Lazy<Size2>(CreateScreenSize, true);
                     if (restart)
                     {
                         StartDuplicating();
@@ -833,7 +835,7 @@ namespace Duplicator
             }
         }
 
-        private Size2 CreateDesktopSize() => _output.Value != null ? new Size2(
+        private Size2 CreateScreenSize() => _output.Value != null ? new Size2(
                 _output.Value.Description.DesktopBounds.Right - _output.Value.Description.DesktopBounds.Left,
                 _output.Value.Description.DesktopBounds.Bottom - _output.Value.Description.DesktopBounds.Top) : new Size2();
 
@@ -847,8 +849,8 @@ namespace Duplicator
                 CpuAccessFlags = CpuAccessFlags.None,
                 BindFlags = BindFlags.RenderTarget,
                 Format = Format.B8G8R8A8_UNorm,
-                Width = DesktopSize.Width,
-                Height = DesktopSize.Height,
+                Width = ScreenSize.Width,
+                Height = ScreenSize.Height,
                 OptionFlags = ResourceOptionFlags.None,
                 MipLevels = 1,
                 ArraySize = 1,
@@ -921,8 +923,8 @@ namespace Duplicator
                 Directory.CreateDirectory(dir);
             }
 
-            int width = DesktopSize.Width;
-            int height = DesktopSize.Height;
+            int width = ScreenSize.Width;
+            int height = ScreenSize.Height;
 
             SinkWriter writer;
             using (var ma = new MediaAttributes())
@@ -941,9 +943,12 @@ namespace Duplicator
                 writer = MediaFactory.CreateSinkWriterFromURL(RecordFilePath, IntPtr.Zero, ma);
             }
 
-            // note framerate is currently not used here for hardware encoders:
-            // if we set the frame rate, the video will try to catch up. Just let the processor/encoder adjust it dynamically
-            MediaFactory.AverageTimePerFrameToFrameRate((long)(10000000 / Options.RecordingFrameRate), out int frameRateNumerator, out int frameRateDenominator);
+            int frameRateNumerator = 0;
+            int frameRateDenominator = 0;
+            if (Options.RecordingFrameRate != 0)
+            {
+                MediaFactory.AverageTimePerFrameToFrameRate((long)(10000000 / Options.RecordingFrameRate), out frameRateNumerator, out frameRateDenominator);
+            }
 
             using (var videoStream = new MediaType())
             {
@@ -954,8 +959,9 @@ namespace Duplicator
                 // [image width] x [image height] x [framerate] x [motion rank] x 0.07 = [desired bitrate]
                 //
 
+                var rate = Options.RecordingFrameRate != 0 ? Options.RecordingFrameRate : 25f;
                 int motionRank = 1;
-                int bitrate = (int)(width * height * Options.RecordingFrameRate * motionRank * 0.07f);
+                int bitrate = (int)(width * height * rate * motionRank * 0.07f);
                 if (bitrate <= 0)
                     throw new InvalidOperationException();
 
@@ -963,8 +969,9 @@ namespace Duplicator
                 videoStream.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 videoStream.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.FromFourCC(new FourCC("H264")));
                 videoStream.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
+                //videoStream.Set(MediaTypeAttributeKeys.Mpeg2Profile, (int)eAVEncH264VProfile.eAVEncH264VProfile_444);
 
-                if (!Options.EnableHardwareTransforms)
+                if (Options.RecordingFrameRate != 0)
                 {
                     videoStream.Set(MediaTypeAttributeKeys.FrameRate, ((long)frameRateNumerator << 32) | (uint)frameRateDenominator);
                 }
@@ -978,17 +985,16 @@ namespace Duplicator
                 video.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 video.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Rgb32);
                 video.Set(MediaTypeAttributeKeys.FrameSize, ((long)width << 32) | (uint)height);
-                if (!Options.EnableHardwareTransforms)
+                if (Options.RecordingFrameRate != 0)
                 {
                     video.Set(MediaTypeAttributeKeys.FrameRate, ((long)frameRateNumerator << 32) | (uint)frameRateDenominator);
                 }
 
                 Trace("Add Video Input Media Type");
-
                 writer.SetInputMediaType(_videoOutputIndex, video, null);
             }
 
-            // https://msdn.microsoft.com/en-us/library/windows/desktop/dd797816.aspx
+            //// https://msdn.microsoft.com/en-us/library/windows/desktop/dd797816.aspx
             //writer.GetServiceForStream(_videoOutputIndex, Guid.Empty, typeof(ICodecAPI).GUID, out IntPtr capiPtr);
             //using (var capi = new CodecApi(capiPtr))
             //{
@@ -997,9 +1003,9 @@ namespace Duplicator
             //    capi.SetValue(CODECAPI_AVEncCommonRateControlMode, (uint)(int)eAVEncCommonRateControlMode.eAVEncCommonRateControlMode_Quality);
             //    mode = (eAVEncCommonRateControlMode)(uint)capi.GetValue(CODECAPI_AVEncCommonRateControlMode);
 
-            //    var quality = (uint)capi.GetValue(CODECAPI_AVEncCommonQuality);
-            //    capi.SetValue(CODECAPI_AVEncCommonQuality, (uint)10);
-            //    capi.SetValue(CODECAPI_AVEncAdaptiveMode, (uint)eAVEncAdaptiveMode.eAVEncAdaptiveMode_FrameRate);
+            //    //var quality = (uint)capi.GetValue(CODECAPI_AVEncCommonQuality);
+            //    //capi.SetValue(CODECAPI_AVEncCommonQuality, (uint)10);
+            //    //capi.SetValue(CODECAPI_AVEncAdaptiveMode, (uint)eAVEncAdaptiveMode.eAVEncAdaptiveMode_FrameRate);
             //}
 
             if (Options.CaptureSound)
@@ -1320,6 +1326,27 @@ namespace Duplicator
             public string Text;
 
             public int CompareTo(TraceEvent other) => TimeMs.CompareTo(other.TimeMs);
+        }
+
+        private enum eAVEncH264VProfile
+        {
+            eAVEncH264VProfile_unknown = 0,
+            eAVEncH264VProfile_Simple = 66,
+            eAVEncH264VProfile_Base = 66,
+            eAVEncH264VProfile_Main = 77,
+            eAVEncH264VProfile_High = 100,
+            eAVEncH264VProfile_422 = 122,
+            eAVEncH264VProfile_High10 = 110,
+            eAVEncH264VProfile_444 = 144,
+            eAVEncH264VProfile_Extended = 88,
+            eAVEncH264VProfile_ScalableBase = 83,
+            eAVEncH264VProfile_ScalableHigh = 86,
+            eAVEncH264VProfile_MultiviewHigh = 118,
+            eAVEncH264VProfile_StereoHigh = 128,
+            eAVEncH264VProfile_ConstrainedBase = 256,
+            eAVEncH264VProfile_UCConstrainedHigh = 257,
+            eAVEncH264VProfile_UCScalableConstrainedBase = 258,
+            eAVEncH264VProfile_UCScalableConstrainedHigh = 259
         }
 
         private enum eAVEncAdaptiveMode
