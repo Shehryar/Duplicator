@@ -30,13 +30,13 @@ namespace Duplicator
         private static EventProvider _provider = new EventProvider(new Guid("964D4572-ADB9-4F3A-8170-FCBECEC27465"));
 
         // common
-        private ConcurrentQueue<TraceEvent> _events = new ConcurrentQueue<TraceEvent>();
         private int _resized;
         private System.Threading.Timer _frameRateTimer;
         private Lazy<TextFormat> _diagsTextFormat;
         private Lazy<Brush> _diagsBrush;
         private Size2 _size;
 #if DEBUG
+        private ConcurrentQueue<TraceEvent> _events = new ConcurrentQueue<TraceEvent>();
         private Lazy<DeviceDebug> _deviceDebug;
 #endif
 
@@ -301,7 +301,9 @@ namespace Duplicator
                         _videoOutputIndex = 0;
                         _soundOutputIndex = 0;
                         _microphoneOutputIndex = 0;
+#if DEBUG
                         DumpTraceEvents();
+#endif
                         RecordFilePath = null;
                         RecordingState = DuplicatorState.Stopped;
                         return;
@@ -346,7 +348,9 @@ namespace Duplicator
                         buffer.CurrentLength = buffer2.ContiguousLength;
                         sample.AddBuffer(buffer);
                         Trace("[" + _videoSamplesCount + "] queued:" + _videoFramesQueue.Count + " time(ms):" + sample.SampleTime / 10000 + " duration(ms):" + sample.SampleDuration / 10000 + " fps:" + _duplicationFrameRate);
+#if DEBUG
                         AddEvent(TraceEventType.WriteVideoFrame, sample.SampleTime, sample.SampleDuration);
+#endif
                         _sinkWriter.Value.WriteSample(_videoOutputIndex, sample);
                         _videoSamplesCount++;
                     }
@@ -373,7 +377,9 @@ namespace Duplicator
                 var ticks = Stopwatch.GetTimestamp() - _startTime;
                 var elapsedNs = (10000000 * ticks) / Stopwatch.Frequency;
                 //Trace("SendStreamTick :" + elapsedNs);
+#if DEBUG
                 AddEvent(TraceEventType.WriteAudioTick, elapsedNs, 0);
+#endif
 
                 if (Debugger.IsAttached)
                 {
@@ -389,7 +395,9 @@ namespace Duplicator
                     {
                         // we may be closing down
                         ReleaseTrace("SendStreamTick[" + streamIndex + "] failed:" + e.Message);
+#if DEBUG
                         AddEvent(TraceEventType.Error, elapsedNs, 0, e.Message);
+#endif
                     }
                 }
 
@@ -413,7 +421,9 @@ namespace Duplicator
                     elapsed = elapsedNs;
                     sample.AddBuffer(buffer);
                     //Trace("sample time(ms)[" + index + "]:" + (sample.SampleTime / 10000) + " duration(ms):" + (sample.SampleDuration / 10000) + " bytes:" + size);
+#if DEBUG
                     AddEvent(TraceEventType.WriteAudioFrame, sample.SampleTime, sample.SampleDuration);
+#endif
                     _sinkWriter.Value.WriteSample(streamIndex, sample);
                     samplesCount++;
                 }
@@ -1245,6 +1255,7 @@ namespace Duplicator
         [DllImport("kernel32")]
         private static extern void CopyMemory(IntPtr Destination, IntPtr Source, int Length);
 
+#if DEBUG
         private void AddEvent(TraceEventType type, long time, long duration) => AddEvent(type, time, duration, null);
         private void AddEvent(TraceEventType type, long time, long duration, string text)
         {
@@ -1327,8 +1338,9 @@ namespace Duplicator
 
             public int CompareTo(TraceEvent other) => TimeMs.CompareTo(other.TimeMs);
         }
+#endif
 
-        private enum eAVEncH264VProfile
+    private enum eAVEncH264VProfile
         {
             eAVEncH264VProfile_unknown = 0,
             eAVEncH264VProfile_Simple = 66,
