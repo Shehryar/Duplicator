@@ -503,7 +503,8 @@ namespace Duplicator
                     RenderDuplicatedFrame(frame);
                 }
 
-                if (RecordingState == DuplicatorState.Started && frameInfo.LastPresentTime != 0)
+                if (RecordingState == DuplicatorState.Started &&
+                    (frameInfo.LastPresentTime != 0 | (frameInfo.LastPresentTime != 0 && _pointerBitmap != null)))
                 {
                     if (_startTime == 0)
                     {
@@ -525,19 +526,22 @@ namespace Duplicator
                         _device.Value.ImmediateContext.CopyResource(res, vf.Texture);
                     }
 
-                    using (var dc = new SharpDX.Direct2D1.DeviceContext(_2D1Device.Value, DeviceContextOptions.EnableMultithreadedOptimizations))
+                    if (_pointerBitmap != null)
                     {
-                        using (var surface = vf.Texture.QueryInterface<Surface>())
+                        using (var dc = new SharpDX.Direct2D1.DeviceContext(_2D1Device.Value, DeviceContextOptions.EnableMultithreadedOptimizations))
                         {
-                            using (var bmp = new Bitmap1(dc, surface))
+                            using (var surface = vf.Texture.QueryInterface<Surface>())
                             {
-                                dc.Target = bmp;
+                                using (var bmp = new Bitmap1(dc, surface))
+                                {
+                                    dc.Target = bmp;
+                                }
                             }
-                        }
 
-                        dc.BeginDraw();
-                        DrawPointerBitmap(dc, false, 0, 0, ScreenSize);
-                        dc.EndDraw();
+                            dc.BeginDraw();
+                            DrawPointerBitmap(dc, false, 0, 0, ScreenSize);
+                            dc.EndDraw();
+                        }
                     }
 
                     Trace("enqueue count:" + _videoFramesQueue.Count + " time(ms):" + vf.Time / 10000 + " elapsed(ms):" + elapsedNs / 10000);
